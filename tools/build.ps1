@@ -7,5 +7,14 @@ $taskDist=Join-Path $taskRoot 'dist'
 New-Item -ItemType Directory -Path $taskDist -Force | Out-Null
 Copy-Item (Join-Path $taskBundle '_framework') $taskDist -Recurse -Force
 Copy-Item (Join-Path $taskRoot 'Yx.WebSim/wwwroot/*') $taskDist -Recurse -Force
+foreach($taskHtmlName in @('index.html','ladder.html')){
+    $taskHtmlPath=Join-Path $taskDist $taskHtmlName
+    $taskHtml=Get-Content -LiteralPath $taskHtmlPath -Raw
+    foreach($taskAssetName in @('app.js','ladder.js','style.css')){
+        $taskHash=(Get-FileHash -LiteralPath (Join-Path $taskDist $taskAssetName) -Algorithm SHA256).Hash.Substring(0,12).ToLowerInvariant()
+        $taskHtml=$taskHtml.Replace(('"'+$taskAssetName+'"'),('"'+$taskAssetName+'?v='+$taskHash+'"'))
+    }
+    Set-Content -LiteralPath $taskHtmlPath -Value $taskHtml -Encoding utf8
+}
 Set-Content -LiteralPath (Join-Path $taskDist '.nojekyll') -Value ''
 Write-Output "Static website: $taskDist"
