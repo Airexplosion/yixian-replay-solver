@@ -248,6 +248,8 @@ def query(store, params):
         SUM(end_ts-begin_ts)/60000.0 AS minutes,
         SUM(score_delta)*3600000.0/SUM(end_ts-begin_ts) AS hourly'''
     with contextlib.closing(connect(store)) as db:
+        # Use one SQLite snapshot while the collector continues committing new rows.
+        db.execute('BEGIN')
         status = coverage(db)
         total = dict(db.execute('SELECT '+aggregate+',COUNT(DISTINCT code_id) AS games,COUNT(DISTINCT player_id) AS players FROM matches WHERE '+where, values).fetchone())
         chars = [dict(r) for r in db.execute(
