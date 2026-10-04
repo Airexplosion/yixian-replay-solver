@@ -26,7 +26,11 @@ function values() {
 async function request(params) {
   const callAt=Math.max(Date.now(),nextRequestAt);nextRequestAt=callAt+1100;
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,callAt-Date.now())));
-  const response=await fetch(`${api}/stats?${params}`, {signal:AbortSignal.timeout(30000)});
+  let response=await fetch(`${api}/stats?${params}`, {signal:AbortSignal.timeout(30000)});
+  if (response.status===429) {
+    await new Promise(resolve=>setTimeout(resolve,1100));
+    response=await fetch(`${api}/stats?${params}`, {signal:AbortSignal.timeout(30000)});
+  }
   const data=await response.json();
   if (!response.ok) throw Error(data.error||`读取失败（${response.status}）`);
   return data;
