@@ -33,6 +33,15 @@ def connect(store):
           next_rank INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
           next_retry REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS roster (
+          code_id INTEGER NOT NULL, player_id TEXT NOT NULL, is_ai INTEGER NOT NULL,
+          PRIMARY KEY(code_id,player_id));
+        CREATE TABLE IF NOT EXISTS entries (
+          code_id INTEGER NOT NULL, lookup_rank INTEGER NOT NULL, outcome TEXT NOT NULL,
+          player_id TEXT, updated_at REAL NOT NULL,
+          PRIMARY KEY(code_id,lookup_rank));
+        CREATE TABLE IF NOT EXISTS code_info (
+          code_id INTEGER PRIMARY KEY, game_mode INTEGER NOT NULL, begin_ts INTEGER);
     ''')
     return db
 
@@ -98,7 +107,31 @@ def save_match(db, data, expected_code=None, lookup_rank=None):
     if lookup_rank is not None:
         # Save the actual requested entry, never infer final placement from battleRank.
         db.execute('INSERT OR IGNORE INTO record_links VALUES (?,?,?)', (*row[:2], lookup_rank))
+    save_roster(db, row[0], compact_roster(data))
     return not bool(existing)
+
+
+def compact_roster(data):
+    """Keep only hashed participant identities and bot flags, never replay snapshots."""
+    players = {}
+    for battle in data.get('roundStats') or []:
+        for side in ('p1', 'p2'):
+            public = (battle.get(side) or {}).get('publicData') or {}
+            uid = public.get('uid')
+            if isinstance(uid, str) and uid:
+                key = hashlib.sha256(uid.encode()).hexdigest()[:20]
+                players[key] = max(players.get(key, 0), int(bool(public.get('isAI'))))
+    return players
+
+
+def save_roster(db, code, players):
+    db.executemany('''INSERT INTO roster VALUES (?,?,?) ON CONFLICT(code_id,player_id)
+        DO UPDATE SET is_ai=MAX(roster.is_ai,excluded.is_ai)''',
+        [(code, player, ai) for player, ai in players.items()])
+
+
+def roster_complete(players, stored):
+    return len(players) == 8 and all(ai or player in stored for player, ai in players.items())
 
 
 def record_replay(store, data, lookup_rank=None):
@@ -174,116 +207,43 @@ def player_history(store, player_id, params):
                 'offset': offset, 'limit': limit, 'generatedAt': now, 'coverage': coverage(db)}
 
 
-def collect(store, fetch, start_code=None, max_calls=250, seconds=450):
-    """Bounded sequential scan with persistent cursor and a small retry allowance.
-
-    No upstream time/list API has been verified. This cannot claim global coverage.
-    fetch returns None only for an unavailable record, and raises for service errors.
-    """
-    import fcntl  # Collector runs on Linux; statistics queries also run on Windows.
-    store = pathlib.Path(store)
-    store.mkdir(parents=True, exist_ok=True)
-    with (store / 'rank-collector.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return {'status': 'already-running'}
-        with contextlib.closing(connect(store)) as db:
-            cursor = meta(db, 'cursor')
-            if cursor is None:
-                if start_code is None or start_code <= 0:
-                    raise ValueError('Set YX_STATS_START_CODE to a verified starting record')
-                cursor = start_code
-                with db:
-                    put_meta(db, 'cursor', cursor)
-                    put_meta(db, 'startCode', cursor)
-            started = time.time()
-            run = {'startedAt': int(started * 1000), 'finishedAt': None,
-                   'calls': 0, 'added': 0, 'status': 'running', 'error': None}
-            with db:
-                put_meta(db, 'lastRun', run)
-            retries = [r[0] for r in db.execute(
-                "SELECT code_id FROM scan WHERE status IN ('partial','unavailable') AND next_retry<=? AND code_id<? ORDER BY next_retry LIMIT 10",
-                (started, cursor))]
-            retry_calls = 0
-            empty_streak = 0
-            try:
-                while run['calls'] < max_calls and time.time() - started < seconds:
-                    retry = bool(retries) and retry_calls < max_calls // 5
-                    code = retries.pop(0) if retry else cursor
-                    prior = db.execute('SELECT * FROM scan WHERE code_id=?', (code,)).fetchone()
-                    rank = 0 if retry else (prior['next_rank'] if prior else 0)
-                    attempts = (prior['attempts'] if prior else 0) + 1
-                    with db:
-                        db.execute('INSERT OR IGNORE INTO scan(code_id) VALUES (?)', (code,))
-                    status = 'pending'
-                    while rank < 8 and run['calls'] < max_calls and time.time() - started < seconds:
-                        data = fetch('/gameStat/fetchPlayerBattleInfo', {'code': base36(code * 1000 + rank)})
-                        run['calls'] += 1
-                        if retry:
-                            retry_calls += 1
-                        if data is None:
-                            if rank == 0:
-                                status = 'unavailable'
-                                rank = 8
-                                break
-                        elif not isinstance(data, dict) or data.get('codeId') != code:
-                            raise ValueError('upstream returned another record')
-                        elif data.get('gameMode') != 3:
-                            if rank != 0:
-                                raise ValueError('inconsistent game mode')
-                            status = 'nonrank'
-                            rank = 8
-                            break
-                        else:
-                            try:
-                                with db:
-                                    added = save_match(db, data, code, lookup_rank=rank)
-                                run['added'] += int(added)
-                            except ValueError:
-                                # Unfinished/missing snapshot/conflicting result: retry later.
-                                pass
-                        # Release the large payload before downloading another player's replay.
-                        data = None
-                        rank += 1
-                        with db:
-                            db.execute('UPDATE scan SET next_rank=?,updated_at=? WHERE code_id=?', (rank, time.time(), code))
-                    if rank == 8 and status == 'pending':
-                        found = db.execute('SELECT COUNT(*) FROM matches WHERE code_id=?', (code,)).fetchone()[0]
-                        status = 'scanned' if found >= 8 else 'partial'
-                    next_retry = time.time() + min(86400, 600 * 2 ** min(attempts - 1, 8))
-                    with db:
-                        db.execute('UPDATE scan SET status=?,next_rank=?,attempts=?,next_retry=?,updated_at=? WHERE code_id=?',
-                                   (status, rank, attempts, next_retry, time.time(), code))
-                        if not retry and rank == 8:
-                            cursor += 1
-                            put_meta(db, 'cursor', cursor)
-                        put_meta(db, 'lastRun', run)
-                    empty_streak = empty_streak + 1 if status == 'unavailable' else 0
-                    if empty_streak >= 12:
-                        break
-                run['status'] = 'ok'
-            except Exception:
-                # Do not expose credentials, upstream messages or raw player IDs.
-                run['status'] = 'error'
-                run['error'] = '上游取数失败，本轮已停止；下轮从保存的位置继续。'
-            finally:
-                run['finishedAt'] = int(time.time() * 1000)
-                with db:
-                    put_meta(db, 'lastRun', run)
-            return run
+def collect(store, fetch, start_code=None, max_calls=2400, seconds=480, workers=4):
+    from rank_collector import collect as run
+    return run(store, fetch, start_code, max_calls, seconds, workers)
 
 
 def coverage(db):
     bounds = db.execute('SELECT MIN(end_ts),MAX(end_ts),COUNT(*),COUNT(DISTINCT code_id) FROM matches').fetchone()
     states = dict(db.execute('SELECT status,COUNT(*) FROM scan GROUP BY status').fetchall())
-    sparse = db.execute('SELECT COUNT(*) FROM (SELECT code_id FROM matches GROUP BY code_id HAVING COUNT(*)<8)').fetchone()[0]
+    audit = db.execute("""WITH r AS (
+        SELECT r.code_id,COUNT(*) AS participants,
+        SUM(CASE WHEN r.is_ai=0 AND m.player_id IS NULL THEN 1 ELSE 0 END) AS missing
+        FROM roster r LEFT JOIN matches m ON r.code_id=m.code_id AND r.player_id=m.player_id
+        GROUP BY r.code_id), g AS (SELECT DISTINCT code_id FROM matches)
+        SELECT SUM(CASE WHEN participants=8 AND missing=0 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN COALESCE(participants,0)<>8 THEN 1 ELSE 0 END),
+        SUM(COALESCE(missing,0)) FROM g LEFT JOIN r USING(code_id)""").fetchone()
+    start = meta(db, 'backfillStart', meta(db, 'startCode'))
+    observed = db.execute('SELECT MAX(code_id),MAX(begin_ts) FROM code_info').fetchone()
+    end = max(observed[0] or 0, db.execute('SELECT MAX(code_id) FROM matches').fetchone()[0] or 0)
+    checked = db.execute('SELECT COUNT(*) FROM scan WHERE code_id>=? AND code_id<=?', (start or 0, end)).fetchone()[0]
+    gaps = max(0, end-start+1-checked) if start and end>=start else 0
+    unavailable = db.execute("SELECT COUNT(*) FROM scan WHERE status='unavailable' AND code_id BETWEEN ? AND ?", (start or 0, end)).fetchone()[0]
+    pending = db.execute("SELECT COUNT(*) FROM scan WHERE status='pending' AND code_id BETWEEN ? AND ?", (start or 0, end)).fetchone()[0]
+    partial = db.execute("SELECT COUNT(*) FROM scan WHERE status='partial' AND code_id BETWEEN ? AND ?", (start or 0, end)).fetchone()[0]
+    backfill = meta(db, 'backfillCursor')
+    backfill_end = meta(db, 'backfillEnd')
+    complete = bool(start and end>=start and not (gaps or unavailable or pending or partial or audit[1] or audit[2]))
     return {'earliestEnd': bounds[0], 'latestEnd': bounds[1], 'playerMatches': bounds[2], 'games': bounds[3],
-            'gamesWithFewerThanEight': sparse,
-            'scanStartCode': meta(db, 'startCode'), 'nextCode': meta(db, 'cursor'),
+            'verifiedGames': audit[0] or 0, 'rosterUnknownGames': audit[1] or 0,
+            'missingPlayerMatches': audit[2] or 0, 'unscannedCodes': gaps,
+            'unavailableCodes': unavailable, 'pendingCodes': pending, 'partialCodes': partial,
+            'scanStartCode': start, 'scanThroughCode': end or None,
+            'nextCode': meta(db, 'cursor'), 'latestObservedBegin': observed[1],
+            'backfillNextCode': backfill, 'backfillRemaining': max(0,backfill_end-backfill) if backfill is not None and backfill_end else 0,
             'scannedCodes': sum(states.values()), 'states': states, 'lastRun': meta(db, 'lastRun'),
-            'intervalSeconds': 600, 'complete': False,
-            'scope': '按复盘编号增量扫描，含不可取记录和重复玩家；尚不能保证全服或完整赛季覆盖。'}
+            'intervalSeconds': 600, 'complete': False, 'intervalComplete': complete,
+            'scope': '按编号补查历史与新增对局，按参赛名单核验真人战绩；AI 不计缺口。覆盖仅限已检查编号范围，尚未证明全服或全赛季完整。'}
 
 
 def query(store, params):

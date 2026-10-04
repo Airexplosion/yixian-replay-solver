@@ -46,7 +46,9 @@ function summary(data) {
   $('coverage').textContent=`累计保存 ${number(c.playerMatches)} 条玩家战绩 / ${number(c.games)} 场对局。样本结算时间：${dateText(c.earliestEnd)} 至 ${dateText(c.latestEnd)}（香港时间）。`;
   $('run-state').textContent=!run?'等待首次采集':run.status==='running'?'正在采集':run.status==='error'?'本轮取数失败，等待重试':`上次采集 ${dateText(run.finishedAt)}`;
   const states=c.states||{};
-  $('scan-detail').textContent=`${c.scope} 已检查 ${number(c.scannedCodes)} 个编号；已保存的排位对局中，少于 8 条有效玩家战绩的有 ${number(c.gamesWithFewerThanEight||0)} 场，暂不可取的编号 ${number(states.unavailable||0)} 个。${c.nextCode?`下一扫描编号 ${c.nextCode}。`:''}${run?.error||''}`;
+  $('audit-progress').textContent=`真人已齐 ${number(c.verifiedGames)} 场 · 名单待核验 ${number(c.rosterUnknownGames)} 场 · 已知真人战绩待补 ${number(c.missingPlayerMatches)} 条`;
+  $('throughput').textContent=run?`${run.workers||1} 路并发 · 本轮 ${number(run.calls)} 次请求 · ${number(run.requestsPerSecond||0,2)} 次/秒 · 新增 ${number(run.added)} 条战绩`:'等待采集';
+  $('scan-detail').textContent=`${c.scope} 编号范围 ${c.scanStartCode||'—'}–${c.scanThroughCode||'—'}：尚未检查 ${number(c.unscannedCodes)} 个，已检查但暂不可取 ${number(c.unavailableCodes)} 个，处理中 ${number(c.pendingCodes)} 个。历史补查剩余 ${number(c.backfillRemaining)} 个编号（含其他模式）。${c.nextCode?`新增扫描位置 ${c.nextCode}。`:''}最近扫描到的对局开始于 ${dateText(c.latestObservedBegin)}。${run?.error||''}`;
 }
 function roles(data) {
   const metric=$('role-sort').value;

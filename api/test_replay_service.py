@@ -1,7 +1,24 @@
 import unittest
+import tempfile
+import json
+import time
+from pathlib import Path
+from unittest.mock import patch
+import replay_service
 from replay_service import decode_code,normalize_replay
 
 class ReplayTests(unittest.TestCase):
+    def test_request_reservations_are_spaced_without_holding_network_lock(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(replay_service,'STORE',Path(temp)):
+            first = replay_service.reserve_upstream_slot()
+            second = replay_service.reserve_upstream_slot()
+            self.assertGreaterEqual(second-first,0.19)
+            self.assertTrue(replay_service.UPSTREAM_LOCK.acquire(blocking=False))
+            replay_service.UPSTREAM_LOCK.release()
+            replay_service.upstream_cooldown(30)
+            self.assertGreaterEqual(replay_service.reserve_upstream_slot(),time.time()+29)
+            self.assertIn('cooldown',json.loads((Path(temp)/'upstream.lock').read_text()))
+
     def test_real_replay_code(self):
         plain,selected=decode_code('gma6hs2pc2')
         self.assertEqual(int(plain,36),33524279140)

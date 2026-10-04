@@ -8,7 +8,6 @@ ROOT = pathlib.Path(os.environ.get('YX_COLLECTOR_ROOT', '/root/zongmen-dabi'))
 STORE = pathlib.Path(os.environ.get('YX_REPLAY_STORE', '/var/lib/yx-replay'))
 ORIGINS = set(os.environ.get('YX_REPLAY_ORIGINS', 'https://airexplosion.github.io,http://127.0.0.1:8765').split(','))
 UPSTREAM_LOCK = threading.Lock()
-LAST_CALL = 0
 CACHE = collections.OrderedDict()
 CACHE_LOCK = threading.Lock()
 RATE_LOCK = threading.Lock()
@@ -70,10 +69,8 @@ def normalize_replay(data, selected=0):
                      'rankBefore':before,'rankChange':change,'rankAfter':before+change,
                      'placement':int(data.get('battleRank') or 0)+1}}
 
-def upstream(path,params,allow_missing=False):
-    global LAST_CALL
-    sys.path.insert(0,str(ROOT))
-    from collector import api
+def reserve_upstream_slot():
+    """Reserve request starts across processes; never hold a lock during HTTP."""
     with UPSTREAM_LOCK:
         STORE.mkdir(parents=True,exist_ok=True)
         with (STORE/'upstream.lock').open('a+') as lock:
@@ -81,14 +78,43 @@ def upstream(path,params,allow_missing=False):
                 import fcntl
                 fcntl.flock(lock,fcntl.LOCK_EX)
             lock.seek(0);saved=lock.read().strip()
-            wait=float(saved or '0')+1.6-time.time()
-            if wait>0: time.sleep(wait)
-            # Reuse the running collector's refresh; never create concurrent Steam sessions.
-            cached=json.loads((ROOT/'collector/.token_cache.json').read_text())
-            try: response=api.api_post(path,params,cached['token'],timeout=25)
-            finally:
-                lock.seek(0);lock.truncate();lock.write(str(time.time()));lock.flush()
-        LAST_CALL=time.monotonic()
+            state=json.loads(saved) if saved else {}
+            if isinstance(state,(int,float)):state={'next':state}
+            now=time.time()
+            when=max(now,state.get('next',0),state.get('cooldown',0))
+            gap=max(0.1,float(os.environ.get('YX_UPSTREAM_GAP','0.2')))
+            state['next']=when+gap
+            lock.seek(0);lock.truncate();lock.write(json.dumps(state));lock.flush()
+    return when
+
+
+def upstream_cooldown(seconds=30):
+    with UPSTREAM_LOCK:
+        with (STORE/'upstream.lock').open('a+') as lock:
+            if sys.platform!='win32':
+                import fcntl
+                fcntl.flock(lock,fcntl.LOCK_EX)
+            lock.seek(0);saved=lock.read().strip()
+            state=json.loads(saved) if saved else {}
+            if not isinstance(state,dict):state={}
+            state['cooldown']=max(state.get('cooldown',0),time.time()+seconds)
+            lock.seek(0);lock.truncate();lock.write(json.dumps(state));lock.flush()
+
+
+def upstream(path,params,allow_missing=False):
+    if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
+    from collector import api
+    when=reserve_upstream_slot()
+    wait=when-time.time()
+    if wait>0:time.sleep(wait)
+    # Reuse the collector's refreshed token; never create concurrent Steam sessions.
+    cached=json.loads((ROOT/'collector/.token_cache.json').read_text())
+    try:
+        response=api.api_post(path,params,cached['token'],timeout=25)
+        if response.get('code') not in (0,1):raise RuntimeError('upstream unavailable')
+    except Exception:
+        upstream_cooldown()
+        raise
     if allow_missing and response.get('code')==0: return None
     if response.get('code')!=1: raise RuntimeError('游戏服务暂时不可用（%s）'%response.get('code'))
     return response['data']
@@ -210,8 +236,9 @@ if __name__=='__main__':
     elif args.collect_stats:
         result=rank_stats.collect(STORE,lambda path,params:upstream(path,params,allow_missing=True),
             start_code=int(os.environ.get('YX_STATS_START_CODE','0')),
-            max_calls=int(os.environ.get('YX_STATS_MAX_CALLS','250')),
-            seconds=int(os.environ.get('YX_STATS_SECONDS','450')))
+            max_calls=int(os.environ.get('YX_STATS_MAX_CALLS','2400')),
+            seconds=int(os.environ.get('YX_STATS_SECONDS','480')),
+            workers=int(os.environ.get('YX_STATS_WORKERS','4')))
         print(json.dumps(result,ensure_ascii=False),flush=True)
         if result.get('status')=='error':sys.exit(1)
     else:
