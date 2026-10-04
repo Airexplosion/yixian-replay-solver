@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect seasonal ranked leaderboard every ten minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=15
+Persistent=true
+[Install]
+WantedBy=timers.target

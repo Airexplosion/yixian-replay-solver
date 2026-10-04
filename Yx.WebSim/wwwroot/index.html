@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>弈仙复盘 · 摆牌求解</title>
+  <meta name="description" content="导入弈仙牌复盘，自动还原双方盘面，在浏览器里寻找更好的摆牌。">
+  <link rel="icon" href="favicon.svg"><link rel="stylesheet" href="style.css">
+  <script src="assets/card-components/runtime/cards.js?v=f6982add340b2423" defer></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="masthead"><a class="brand" href="./"><span class="seal">弈</span><span>弈仙复盘<small>摆牌 · 推演 · 求解</small></span></a><div class="steps"><a href="ladder.html">赛季天梯榜 ↗</a><span class="engine-pill" id="engine-pill">sim 加载中</span></div></header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">REPLAY WORKBENCH</p><h1>这一局，还能怎么摆？</h1><p class="muted">粘贴复盘，还原盘面。让手里的牌，多一种解法。</p></div><div class="steps"><span>01 导入复盘</span><i>→</i><span>02 核对盘面</span><i>→</i><span>03 寻找解法</span></div></section>
+    <section class="load-panel" aria-live="polite"><div class="load-copy"><strong id="load-title">正在准备浏览器求解器</strong><span id="load-detail">下载 sim、卡牌规则与运行环境；首次打开需要稍候。</span></div><progress id="load-progress" max="100" value="0"></progress><button id="retry" hidden>重新加载</button></section>
+    <section class="import-panel"><label for="replay-input">复盘代码 / 完整盘面</label><div class="import-row"><textarea id="replay-input" rows="2" placeholder="粘贴游戏复盘代码，或 mod 导出的求解 JSON…" spellcheck="false"></textarea><button id="import" class="primary" disabled>还原盘面 <span>↗</span></button></div><div class="import-foot"><span id="import-hint">盘面只用于这次推演，求解在你的浏览器里进行。</span><div><button id="open-file" class="text-button" disabled>导入文件</button><button id="demo" class="text-button" disabled>试一个示例</button></div></div><input type="file" id="file" accept=".json,.txt" hidden></section>
+    <p id="message" role="status" aria-live="polite" hidden></p>
+    <p id="match-score" class="muted" hidden></p>
+    <section id="workspace" hidden>
+      <div class="workbar"><div><span class="eyebrow">当前盘面</span><h2 id="match-title">第 1 轮</h2></div><div class="work-controls"><label>轮次<select id="round"></select></label><label>视角<select id="perspective"><option value="0">原复盘视角</option><option value="1">交换双方</option></select></label><label>先手<select id="first"><option value="me">我方先手</option><option value="foe">对手先手</option><option value="both">两种都算</option></select></label><label>求解时间<select id="duration"><option value="3000">3 秒</option><option value="8000" selected>8 秒</option><option value="15000">15 秒</option><option value="30000">30 秒</option></select></label></div></div>
+      <section class="side-panel foe"><div class="side-head"><div><span class="side-dot"></span><h3>对手牌桌</h3><span id="foe-name" class="side-name"></span></div><div class="stats" id="foe-stats"></div></div><div class="cards board" id="foe-board"></div><details class="side-details"><summary>仙命、刻印与开局状态</summary><div id="foe-details"></div></details></section>
+      <section class="side-panel me"><div class="side-head"><div><span class="side-dot"></span><h3>我方牌桌</h3><span id="me-name" class="side-name"></span></div><div class="stats" id="me-stats"></div></div><div class="cards board" id="me-board"></div><div class="hand-head"><span>可用手牌</span><small>求解会从牌桌与手牌中选牌并排列</small></div><div class="cards hand" id="hand"></div><details class="side-details"><summary>仙命、刻印与开局状态</summary><div id="me-details"></div></details></section>
+      <div class="solve-bar"><div><strong>固定对手，寻找更好的我方摆法</strong><p id="solve-note">按胜负与剩余血量排序；限时搜索不保证全局最优。</p></div><div class="solve-actions"><button id="cancel" hidden>停止求解</button><button id="solve" class="primary" disabled>开始求解 <span>✦</span></button></div></div>
+      <section id="results" hidden><div class="results-head"><div><p class="eyebrow">SEARCH RESULTS</p><h2>推荐摆法</h2></div><p id="search-status" aria-live="polite"></p></div><div id="result-list"></div></section>
+    </section>
+    <section class="empty-state" id="empty"><span class="empty-mark">八</span><h2>把复盘放进来，牌局就会在这里展开</h2><p>自动还原牌序、牌级、手牌与双方仙命。<br>加载完成后，可以先用示例体验求解。</p></section>
+    <footer><span>C# sim 浏览器实验版 · 机制仍在对拍校验</span><a href="https://sharpobject.github.io/yxp_wiki/assets/card-components/atlas-gallery.html" target="_blank" rel="noopener">卡牌资源：yxp_wiki ↗</a><a href="https://github.com/Airexplosion/yixian-replay-solver" target="_blank" rel="noopener">GitHub ↗</a></footer>
+  </main>
+</body></html>

@@ -1,0 +1,13 @@
+[Unit]
+Description=Yixian replay gateway
+After=network-online.target daoxin-collector.service
+[Service]
+Type=simple
+WorkingDirectory=/root/yx-replay
+ExecStart=/usr/bin/python3 /root/yx-replay/replay_service.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

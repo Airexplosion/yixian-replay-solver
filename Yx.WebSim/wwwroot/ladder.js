@@ -1,0 +1,12 @@
+const $=id=>document.getElementById(id);let api='',generation=0;
+const formatDate=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Hong_Kong',hour12:false}):'暂无';
+async function request(path){const response=await fetch(api+path,{signal:AbortSignal.timeout(30000)});const data=await response.json();if(!response.ok)throw Error(data.error||`获取失败（${response.status}）`);return data;}
+function cell(text,className=''){const td=document.createElement('td');td.textContent=text;td.className=className;return td;}
+function delta(value,rank=false){if(value==null)return cell('—');return cell(value===0?'0':rank?`${value>0?'↑':'↓'} ${Math.abs(value)}`:`${value>0?'+':''}${value}`,value>0?'win':value<0?'loss':'muted');}
+async function load(){const own=++generation;$('refresh').disabled=true;$('message').hidden=false;$('message').textContent='正在获取天梯榜…';try{const data=await request(`/ladder?season=${encodeURIComponent($('season').value)}`);if(own!==generation)return;
+ $('players').replaceChildren(...[...data.players].sort((a,b)=>a.rank-b.rank).map(p=>{const tr=document.createElement('tr');tr.append(cell(p.rank),cell(p.name),cell(p.score),delta(p.delta),delta(p.rankDelta,true));return tr;}));
+ $('stamp').textContent=`快照时间：${formatDate(data.generatedAt)}（香港时间） · ${data.count} 名${data.baselineAt?` · 变化对比：${formatDate(data.baselineAt)}`:' · 首次快照，尚无变化基线'}`;
+ $('ladder-panel').hidden=false;$('message').hidden=true;
+ }catch(e){if(own!==generation)return;$('message').hidden=false;$('message').textContent=e instanceof TypeError?'暂时连不上榜单服务，请稍后刷新。':e.message;}finally{if(own===generation)$('refresh').disabled=false;}}
+$('season').onchange=load;$('refresh').onclick=load;
+try{const settings=await fetch('settings.json').then(r=>r.json());api=settings.replayApi.replace(/\/$/,'');const data=await request('/ladder/seasons');const seasons=data.seasons.sort((a,b)=>b-a);if(!seasons.length)throw Error('尚无赛季快照');$('season').replaceChildren(...seasons.map(s=>{const o=document.createElement('option');o.value=s;o.textContent=`第 ${s} 赛季`;return o;}));$('season').disabled=false;setTimeout(load,1100);}catch(e){$('message').textContent=e instanceof TypeError?'暂时连不上榜单服务，请稍后重新打开。':e.message;}

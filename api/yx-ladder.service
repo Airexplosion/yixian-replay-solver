@@ -1,0 +1,9 @@
+[Unit]
+Description=Yixian seasonal rank snapshot
+After=network-online.target
+[Service]
+Type=oneshot
+WorkingDirectory=/root/yx-replay
+ExecStart=/usr/bin/python3 /root/yx-replay/replay_service.py --collect-ladder
+NoNewPrivileges=true
+PrivateTmp=true

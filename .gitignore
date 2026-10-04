@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+dist/
+.env*
+!.env.example
+api/*.local.json
+**/__pycache__/
+*.pyc
+tools/remote.py
+tools/probe-*.sh
+tools/inspect-*.sh
+tools/check-*.sh
+tools/restart-api.sh
+tools/install-api.sh
+tools/publish-*.sh

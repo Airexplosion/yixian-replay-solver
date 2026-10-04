@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    弈仙牌战斗结算核 · 纯 .NET8 库(非 ILRuntime，无 Unity/游戏依赖)。
+    目的：把游戏热更域里的战斗逻辑忠实搬成 headless、确定性、可真多线程并发的纯计算，
+    用于 AI 摆牌搜索时对候选摆法批量试算血差。
+    约束：只依赖 BCL；不引用任何 Unity/游戏/ILRuntime 程序集；单场战斗自带工作态、互不共享 →
+    批算天然可跨线程并行。设计见 docs/superpowers/specs/2026-09-22-parallel-battle-sim-design.md。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- 抽出的战斗配置数据（厂商数据，gitignore）：存在则拷到输出目录供 JsonBattleConfig 读取。 -->
+  <ItemGroup Condition="Exists('..\data\battle_config.local.json')">
+    <Content Include="..\data\battle_config.local.json" Link="battle_config.local.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\data\card_effects.local.json')">
+    <Content Include="..\data\card_effects.local.json" Link="card_effects.local.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Yx.BattleSim.Tests" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\data\oracle_b4.local.json')">
+    <Content Include="..\data\oracle_b4.local.json" Link="oracle_b4.local.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
