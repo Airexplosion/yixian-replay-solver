@@ -12,7 +12,9 @@
 
 这是 C# sim 的浏览器实验版，基于目前拿到的源码移植，并非原生求解器 v0.2.6 的完整源码。部分机制仍有偏差；含尚未移植的仙魔策略时会拒绝求解。限时推荐也不保证全局最优。请用游戏实战复核。
 
-天梯页面使用游戏天梯总榜入口 `gameData/fetchLeaderboard` 的 `category=0`，按赛季保存官方返回的前 100 名。随机角色道心榜在这个接口里用 `category=-1`。服务器约每 10 分钟采集，页面增减值是相邻快照的净变化；新上榜玩家无前一次基线时显示“—”。它不覆盖所有玩家，也不提供每场加减分。
+天梯页面使用游戏天梯总榜入口 `gameData/fetchLeaderboard` 的 `category=0`，按赛季保存官方返回的前 100 名。随机角色道心榜在这个接口里用 `category=-1`。服务器约每 10 分钟采集；页面默认比较近 24 小时，也可自选起止时间，或选择今天、近 7 天、最近两次快照。
+
+时间段模式使用区间内第一份与最后一份已保存快照，展示期初和期末积分、期间净分、名次变化，并可按期间净上分排序。页面显示实际对比时间和可用快照范围；不足两份快照不计算变化，超出采集范围会提示截断。起点与终点榜单取并集，新入榜或已离榜玩家缺少一端积分时显示“—”。只覆盖官方前 100 名快照，不能由此推算全服或每场加减分。点击玩家名称会把所选时间传给逐场战绩页。
 
 ## 角色战绩统计
 
@@ -32,11 +34,14 @@
 
 ## 本地构建
 
+构建会生成静态资源的 SHA256 清单。浏览器通过 Service Worker 保存 sim、卡表与效果数据；同一版本再次打开从本机缓存读取，页面显示是否复用了缓存。同一页面内不会重复启动已经就绪的 sim；刷新页面仍需重新初始化运行环境。卡图的图集、渲染资源及生成的卡面按需持久缓存，图片资源变化时更新，sim 与图片文件均验证内容哈希。历史未使用的卡图不会一次全部下载。浏览器不支持缓存或存储空间不足时继续普通加载；清理浏览器站点数据后需重新下载。缓存只包含公开静态文件，不保存复盘 API 数据或榜单请求。
+
 需要 .NET SDK 8.0.100 和 Python 3：
 
 ```powershell
 dotnet workload install wasm-tools --skip-manifest-update
 python -m unittest discover -s api -p 'test_*.py'
+node --test tests/resource-cache.test.cjs
 dotnet run --project tests/SimSmoke -c Release
 ./tools/build.ps1
 python -m http.server 8765 --bind 127.0.0.1 --directory dist
@@ -55,6 +60,8 @@ python3 api/replay_service.py --port 8443
 ```
 
 提供 `/api/v1/replays/{code}`、`/api/v1/ladder?season=11`、`/api/v1/ladder/seasons` 和快照索引 `/api/v1/ladder/history?season=11`。systemd 示例在 `api/`，部署时按实际机器修改路径。接口只允许 GET，带请求频率限制。HTTPS IP 证书的续期由服务器既有证书任务负责，服务会重新载入更新后的证书。
+
+`/api/v1/ladder?season=11&from=<毫秒时间戳>&to=<毫秒时间戳>` 返回所选区间的快照对比，边界包含起止时间。`comparison` 提供请求时间、实际快照数量、可用时间范围、是否可比较及新入/离榜人数；`baselineAt` 和 `generatedAt` 是实际采用的快照时间。没有起止参数时继续返回最近快照及相邻快照变化。
 
 ### 统计接口与调度
 

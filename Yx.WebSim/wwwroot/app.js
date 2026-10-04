@@ -1,5 +1,6 @@
+import {prepareCache} from './resource-cache.js?v=__CACHE_VERSION__';
 const $ = id => document.getElementById(id);
-const state = {ready:false, busy:false, worker:null, cards:null, effects:null, config:null, rounds:[], request:null, timer:null, api:null};
+const state = {ready:false, busy:false, worker:null, cards:null, effects:null, config:null, rounds:[], request:null, timer:null, api:null,booting:null,cache:null};
 const copy = value => structuredClone(value);
 function message(text,error=false){ $('message').hidden=!text; $('message').textContent=text; $('message').className=error?'error':''; }
 function controls(){
@@ -10,6 +11,7 @@ function controls(){
 function loading(title, detail, progress){ $('load-title').textContent=title; $('load-detail').textContent=detail; $('load-progress').value=progress; }
 async function checkedFetch(url){ const response=await fetch(url); if(!response.ok) throw Error(`资源加载失败（HTTP ${response.status}）`); return response; }
 async function startWorker(){
+  if(state.ready&&state.worker)return;
   state.ready=false; controls(); $('engine-pill').textContent='sim 加载中'; $('engine-pill').className='engine-pill';
   if(state.worker) state.worker.terminate();
   state.worker=new Worker(new URL('sim-worker.js',import.meta.url),{type:'module'});
@@ -27,7 +29,7 @@ async function startWorker(){
       if(data.type==='ready'){
         clearTimeout(timeout); state.ready=true;
         $('engine-pill').textContent='sim 已就绪'; $('engine-pill').classList.add('ready');
-        loading('求解器已准备好','sim 已在浏览器加载。导入复盘后即可开始求解。',100); controls(); resolve();
+        loading('求解器已准备好',state.cache?.available?(state.cache.cached?'sim 已从本机缓存初始化，无需重复下载。':'sim 已加载并保存在本机，下次打开会复用。'):'sim 已在浏览器加载。导入复盘后即可开始求解。',100); controls(); resolve();
       } else if(data.type==='result'){
         resetSearch();
         if(!data.report.ok){ message(data.report.error||'求解失败',true); return; }
@@ -42,14 +44,23 @@ async function startWorker(){
   });
 }
 async function boot(){
+  if(state.ready)return;
+  if(state.booting)return state.booting;
+  state.booting=bootOnce();
+  try{await state.booting;}finally{state.booting=null;}
+}
+async function bootOnce(){
   $('retry').hidden=true; message('');
   try{
-    loading('正在下载卡牌规则','首次加载稍久，后续访问会使用浏览器缓存。',10);
+    loading('正在检查本机缓存','同一版本的 sim 与卡图会复用已保存资源。',5);
+    state.cache=await prepareCache(({done,total,cached})=>loading(cached?'正在复用本机 sim':'正在保存 sim 资源',`${done} / ${total} 个资源已保存；卡图会在用到时缓存。`,5+40*done/Math.max(1,total)));
+    $('cache-note').textContent=state.cache.available?'本机缓存已启用 · 卡图按需保存 · 版本变化时自动更新':`当前按普通方式加载${state.cache.error?'：'+state.cache.error:''}。`;
+    loading('正在读取卡牌规则',state.cache.available?'从本机资源读取卡表与效果数据。':'正在读取卡表与效果数据。',45);
     const [cards,effects,settings]=await Promise.all([
       checkedFetch('data/battle_config.json').then(r=>r.text()),checkedFetch('data/card_effects.json').then(r=>r.text()),
       checkedFetch('settings.json').then(r=>r.json())]);
     state.cards=cards; state.effects=effects;state.config=JSON.parse(cards);state.api=settings.replayApi;
-    loading('正在加载 sim 运行环境','计算使用你的设备；无需在电脑上安装游戏或 mod。',45);
+    loading(state.cache.cached?'正在从本机缓存初始化 sim':'正在初始化 sim','计算使用你的设备；无需在电脑上安装游戏或 mod。',70);
     await startWorker();
   }catch(error){ loading('加载没有完成',error.message,0); $('retry').hidden=false; $('engine-pill').textContent='加载失败'; }
 }

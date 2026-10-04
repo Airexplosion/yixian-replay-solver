@@ -1,6 +1,7 @@
 """Replay-only gateway and seasonal rank snapshots. No credentials in responses."""
 import argparse, collections, datetime as dt, hashlib, json, os, pathlib, re, ssl, sys, threading, time
 import rank_stats
+import ladder_history
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -165,7 +166,8 @@ def collect_ladder():
         # Preserve a stable baseline for historical seasons, avoiding duplicate archives.
         same=previous and all(p['id'] in previous and p['score']==previous[p['id']]['score'] and p['rank']==previous[p['id']]['rank'] for p in players)
         if not same or season==config.SEASON_ID:
-            (directory/(now.strftime('%Y%m%dT%H%M%SZ')+'.json')).write_text(encoded)
+            archive=directory/(now.strftime('%Y%m%dT%H%M%SZ')+'.json')
+            staged=archive.with_suffix('.tmp');staged.write_text(encoded);staged.replace(archive)
         temp=directory/'latest.tmp';temp.write_text(encoded);temp.replace(latest)
         print('rank snapshot season=%s count=%s'%(season,len(players)),flush=True)
 
@@ -202,8 +204,11 @@ class Handler(BaseHTTPRequestHandler):
             if player_match:
                 return self.send(200,rank_stats.player_history(STORE,player_match[1],parse_qs(url.query)))
             if url.path=='/api/v1/ladder':
-                season=int(parse_qs(url.query).get('season',['11'])[0]);path=ladder_path(season)/'latest.json'
+                params=parse_qs(url.query)
+                season=int(params.get('season',['11'])[0]);path=ladder_path(season)/'latest.json'
                 if not path.exists(): return self.send(404,{'error':'这个赛季还没有采集快照'})
+                if 'from' in params or 'to' in params:
+                    return self.send(200,ladder_history.compare(ladder_path(season),season,params))
                 return self.send(200,json.loads(path.read_text()))
             if url.path=='/api/v1/ladder/seasons':
                 paths=sorted((STORE/'ladder').glob('*/latest.json'))

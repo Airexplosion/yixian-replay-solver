@@ -23,6 +23,7 @@ jobs:
           dotnet-version: 8.0.100
       - run: dotnet workload install wasm-tools --skip-manifest-update
       - run: python3 -m unittest discover -s api -p 'test_*.py'
+      - run: node --test tests/resource-cache.test.cjs
       - run: dotnet run --project tests/SimSmoke -c Release
       - shell: pwsh
         run: ./tools/build.ps1

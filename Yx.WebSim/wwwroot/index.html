@@ -5,7 +5,7 @@
   <title>弈仙复盘 · 摆牌求解</title>
   <meta name="description" content="导入弈仙牌复盘，自动还原双方盘面，在浏览器里寻找更好的摆牌。">
   <link rel="icon" href="favicon.svg"><link rel="stylesheet" href="style.css">
-  <script src="assets/card-components/runtime/cards.js?v=f6982add340b2423" defer></script>
+  <script src="assets/card-components/runtime/cards.js?v=__CARD_VERSION__" defer></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -13,6 +13,7 @@
   <main>
     <section class="intro"><div><p class="eyebrow">REPLAY WORKBENCH</p><h1>这一局，还能怎么摆？</h1><p class="muted">粘贴复盘，还原盘面。让手里的牌，多一种解法。</p></div><div class="steps"><span>01 导入复盘</span><i>→</i><span>02 核对盘面</span><i>→</i><span>03 寻找解法</span></div></section>
     <section class="load-panel" aria-live="polite"><div class="load-copy"><strong id="load-title">正在准备浏览器求解器</strong><span id="load-detail">下载 sim、卡牌规则与运行环境；首次打开需要稍候。</span></div><progress id="load-progress" max="100" value="0"></progress><button id="retry" hidden>重新加载</button></section>
+    <p id="cache-note" class="muted filter-note" aria-live="polite">正在检查 sim 与卡图的本机缓存…</p>
     <section class="import-panel"><label for="replay-input">复盘代码 / 完整盘面</label><div class="import-row"><textarea id="replay-input" rows="2" placeholder="粘贴游戏复盘代码，或 mod 导出的求解 JSON…" spellcheck="false"></textarea><button id="import" class="primary" disabled>还原盘面 <span>↗</span></button></div><div class="import-foot"><span id="import-hint">盘面只用于这次推演，求解在你的浏览器里进行。</span><div><button id="open-file" class="text-button" disabled>导入文件</button><button id="demo" class="text-button" disabled>试一个示例</button></div></div><input type="file" id="file" accept=".json,.txt" hidden></section>
     <p id="message" role="status" aria-live="polite" hidden></p>
     <p id="match-score" class="muted" hidden></p>
