@@ -1,5 +1,6 @@
 """Replay-only gateway and seasonal rank snapshots. No credentials in responses."""
 import argparse, collections, datetime as dt, hashlib, json, os, pathlib, re, ssl, sys, threading, time
+import rank_stats
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -69,17 +70,26 @@ def normalize_replay(data, selected=0):
                      'rankBefore':before,'rankChange':change,'rankAfter':before+change,
                      'placement':int(data.get('battleRank') or 0)+1}}
 
-def upstream(path,params):
+def upstream(path,params,allow_missing=False):
     global LAST_CALL
     sys.path.insert(0,str(ROOT))
     from collector import api
     with UPSTREAM_LOCK:
-        wait=LAST_CALL+1.5-time.monotonic()
-        if wait>0: time.sleep(wait)
-        # Reuse the running collector's refresh; never create concurrent Steam sessions.
-        cached=json.loads((ROOT/'collector/.token_cache.json').read_text())
-        response=api.api_post(path,params,cached['token'],timeout=25)
+        STORE.mkdir(parents=True,exist_ok=True)
+        with (STORE/'upstream.lock').open('a+') as lock:
+            if sys.platform!='win32':
+                import fcntl
+                fcntl.flock(lock,fcntl.LOCK_EX)
+            lock.seek(0);saved=lock.read().strip()
+            wait=float(saved or '0')+1.6-time.time()
+            if wait>0: time.sleep(wait)
+            # Reuse the running collector's refresh; never create concurrent Steam sessions.
+            cached=json.loads((ROOT/'collector/.token_cache.json').read_text())
+            try: response=api.api_post(path,params,cached['token'],timeout=25)
+            finally:
+                lock.seek(0);lock.truncate();lock.write(str(time.time()));lock.flush()
         LAST_CALL=time.monotonic()
+    if allow_missing and response.get('code')==0: return None
     if response.get('code')!=1: raise RuntimeError('游戏服务暂时不可用（%s）'%response.get('code'))
     return response['data']
 
@@ -89,7 +99,11 @@ def replay(code):
         saved=CACHE.get(plain)
         if saved and time.monotonic()-saved[0]<600:
             CACHE.move_to_end(plain); return saved[1]
-    result=normalize_replay(upstream('/gameStat/fetchPlayerBattleInfo',{'code':plain}),selected)
+    data=upstream('/gameStat/fetchPlayerBattleInfo',{'code':plain})
+    result=normalize_replay(data,selected)
+    try: rank_stats.record_replay(STORE,data)
+    except (ValueError,OSError): pass
+    data=None
     with CACHE_LOCK:
         CACHE[plain]=(time.monotonic(),result)
         while len(CACHE)>64: CACHE.popitem(last=False)
@@ -156,6 +170,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/v1/health': return self.send(200,{'ok':True,'service':'yx-replay','sim':'browser'})
             match=re.fullmatch(r'/api/v1/replays/([a-zA-Z0-9]{5,14})',url.path)
             if match: return self.send(200,replay(match[1]))
+            if url.path=='/api/v1/stats':
+                return self.send(200,rank_stats.query(STORE,parse_qs(url.query)))
             if url.path=='/api/v1/ladder':
                 season=int(parse_qs(url.query).get('season',['11'])[0]);path=ladder_path(season)/'latest.json'
                 if not path.exists(): return self.send(404,{'error':'这个赛季还没有采集快照'})
@@ -185,8 +201,16 @@ class ReloadingTLS(ThreadingHTTPServer):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--collect-ladder',action='store_true')
+    parser.add_argument('--collect-stats',action='store_true')
     parser.add_argument('--port',type=int,default=8443);args=parser.parse_args()
     if args.collect_ladder:collect_ladder()
+    elif args.collect_stats:
+        result=rank_stats.collect(STORE,lambda path,params:upstream(path,params,allow_missing=True),
+            start_code=int(os.environ.get('YX_STATS_START_CODE','0')),
+            max_calls=int(os.environ.get('YX_STATS_MAX_CALLS','250')),
+            seconds=int(os.environ.get('YX_STATS_SECONDS','450')))
+        print(json.dumps(result,ensure_ascii=False),flush=True)
+        if result.get('status')=='error':sys.exit(1)
     else:
         cert=os.environ.get('YX_TLS_CERT','/etc/letsencrypt/live/grok-public-ip/fullchain.pem')
         key=os.environ.get('YX_TLS_KEY','/etc/letsencrypt/live/grok-public-ip/privkey.pem')

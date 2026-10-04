@@ -6,10 +6,13 @@ dist/
 api/*.local.json
 **/__pycache__/
 *.pyc
+*.sqlite3*
+rank-stats.env
 tools/remote.py
 tools/probe-*.sh
 tools/inspect-*.sh
 tools/check-*.sh
 tools/restart-api.sh
 tools/install-api.sh
+tools/install-*.sh
 tools/publish-*.sh

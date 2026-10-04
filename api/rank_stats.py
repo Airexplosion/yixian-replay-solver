@@ -1,0 +1,286 @@
+"""Compact ranked match statistics. Raw replay payloads are never written here."""
+import contextlib
+import datetime as dt
+import hashlib
+import json
+import os
+import pathlib
+import sqlite3
+import time
+
+
+def connect(store):
+    store = pathlib.Path(store)
+    store.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(store / 'rank-stats.sqlite3'), timeout=20)
+    db.row_factory = sqlite3.Row
+    db.execute('PRAGMA journal_mode=WAL')
+    db.executescript('''
+        CREATE TABLE IF NOT EXISTS matches (
+          code_id INTEGER NOT NULL, player_id TEXT NOT NULL, name TEXT NOT NULL,
+          character_id INTEGER NOT NULL, begin_ts INTEGER NOT NULL, end_ts INTEGER NOT NULL,
+          score_before INTEGER NOT NULL, score_delta INTEGER NOT NULL,
+          random_character INTEGER NOT NULL, version TEXT NOT NULL,
+          PRIMARY KEY(code_id, player_id));
+        CREATE INDEX IF NOT EXISTS matches_time ON matches(end_ts, score_before);
+        CREATE TABLE IF NOT EXISTS scan (
+          code_id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending',
+          next_rank INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+          next_retry REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    ''')
+    return db
+
+
+def meta(db, key, default=None):
+    row = db.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+    return json.loads(row[0]) if row else default
+
+
+def put_meta(db, key, value):
+    db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
+
+
+def integer(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError('invalid integer')
+    return value
+
+
+def compact_match(data, expected_code=None):
+    """Only root player's result is known; opponents' scores must never be inferred."""
+    if not isinstance(data, dict) or data.get('gameMode') != 3:
+        return None
+    code = integer(data.get('codeId'))
+    if code <= 0 or (expected_code is not None and code != expected_code):
+        raise ValueError('record code mismatch')
+    uid = data.get('uid')
+    character = integer(data.get('charId'))
+    begin = integer(data.get('beginTs'))
+    end = integer(data.get('endTs'))
+    before = integer(data.get('beginRankScore'))
+    change = integer(data.get('diffRankScore'))
+    if not isinstance(uid, str) or not uid or character <= 0 or not 0 < begin < end:
+        raise ValueError('incomplete ranked record')
+    if end - begin > 48 * 3600 * 1000:
+        raise ValueError('invalid duration')
+    observations = []
+    for battle in data.get('roundStats') or []:
+        for side in ('p1', 'p2'):
+            public = (battle.get(side) or {}).get('publicData') or {}
+            if public.get('uid') == uid:
+                observations.append(public)
+    if not observations or any(p.get('characterId') != character or p.get('isAI') for p in observations):
+        raise ValueError('player identity could not be validated')
+    # battleRank can differ for repeated UID responses; it is intentionally not used.
+    return (code, hashlib.sha256(uid.encode()).hexdigest()[:20],
+            str(observations[-1].get('username') or '未命名玩家')[:80], character,
+            begin, end, before, change, int(bool(data.get('randomCharacter'))),
+            str(data.get('version') or '')[:40])
+
+
+def save_match(db, data, expected_code=None):
+    row = compact_match(data, expected_code)
+    if row is None:
+        return False
+    # Repeated/retried share codes must not inflate counts or overwrite a result.
+    existing = db.execute('SELECT character_id,begin_ts,end_ts,score_before,score_delta FROM matches WHERE code_id=? AND player_id=?', row[:2]).fetchone()
+    if existing and tuple(existing) != (row[3], row[4], row[5], row[6], row[7]):
+        raise ValueError('conflicting duplicate result')
+    db.execute('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?,?)', row)
+    return not bool(existing)
+
+
+def record_replay(store, data):
+    with contextlib.closing(connect(store)) as db:
+        with db:
+            return save_match(db, data)
+
+
+def base36(number):
+    result = ''
+    while number:
+        number, r = divmod(number, 36)
+        result = '0123456789abcdefghijklmnopqrstuvwxyz'[r] + result
+    return result
+
+
+def collect(store, fetch, start_code=None, max_calls=250, seconds=450):
+    """Bounded sequential scan with persistent cursor and a small retry allowance.
+
+    No upstream time/list API has been verified. This cannot claim global coverage.
+    fetch returns None only for an unavailable record, and raises for service errors.
+    """
+    import fcntl  # Collector runs on Linux; statistics queries also run on Windows.
+    store = pathlib.Path(store)
+    store.mkdir(parents=True, exist_ok=True)
+    with (store / 'rank-collector.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'status': 'already-running'}
+        with contextlib.closing(connect(store)) as db:
+            cursor = meta(db, 'cursor')
+            if cursor is None:
+                if start_code is None or start_code <= 0:
+                    raise ValueError('Set YX_STATS_START_CODE to a verified starting record')
+                cursor = start_code
+                with db:
+                    put_meta(db, 'cursor', cursor)
+                    put_meta(db, 'startCode', cursor)
+            started = time.time()
+            run = {'startedAt': int(started * 1000), 'finishedAt': None,
+                   'calls': 0, 'added': 0, 'status': 'running', 'error': None}
+            with db:
+                put_meta(db, 'lastRun', run)
+            retries = [r[0] for r in db.execute(
+                "SELECT code_id FROM scan WHERE status IN ('partial','unavailable') AND next_retry<=? AND code_id<? ORDER BY next_retry LIMIT 10",
+                (started, cursor))]
+            retry_calls = 0
+            empty_streak = 0
+            try:
+                while run['calls'] < max_calls and time.time() - started < seconds:
+                    retry = bool(retries) and retry_calls < max_calls // 5
+                    code = retries.pop(0) if retry else cursor
+                    prior = db.execute('SELECT * FROM scan WHERE code_id=?', (code,)).fetchone()
+                    rank = 0 if retry else (prior['next_rank'] if prior else 0)
+                    attempts = (prior['attempts'] if prior else 0) + 1
+                    with db:
+                        db.execute('INSERT OR IGNORE INTO scan(code_id) VALUES (?)', (code,))
+                    status = 'pending'
+                    while rank < 8 and run['calls'] < max_calls and time.time() - started < seconds:
+                        data = fetch('/gameStat/fetchPlayerBattleInfo', {'code': base36(code * 1000 + rank)})
+                        run['calls'] += 1
+                        if retry:
+                            retry_calls += 1
+                        if data is None:
+                            if rank == 0:
+                                status = 'unavailable'
+                                rank = 8
+                                break
+                        elif not isinstance(data, dict) or data.get('codeId') != code:
+                            raise ValueError('upstream returned another record')
+                        elif data.get('gameMode') != 3:
+                            if rank != 0:
+                                raise ValueError('inconsistent game mode')
+                            status = 'nonrank'
+                            rank = 8
+                            break
+                        else:
+                            try:
+                                with db:
+                                    added = save_match(db, data, code)
+                                run['added'] += int(added)
+                            except ValueError:
+                                # Unfinished/missing snapshot/conflicting result: retry later.
+                                pass
+                        # Release the large payload before downloading another player's replay.
+                        data = None
+                        rank += 1
+                        with db:
+                            db.execute('UPDATE scan SET next_rank=?,updated_at=? WHERE code_id=?', (rank, time.time(), code))
+                    if rank == 8 and status == 'pending':
+                        found = db.execute('SELECT COUNT(*) FROM matches WHERE code_id=?', (code,)).fetchone()[0]
+                        status = 'scanned' if found >= 8 else 'partial'
+                    next_retry = time.time() + min(86400, 600 * 2 ** min(attempts - 1, 8))
+                    with db:
+                        db.execute('UPDATE scan SET status=?,next_rank=?,attempts=?,next_retry=?,updated_at=? WHERE code_id=?',
+                                   (status, rank, attempts, next_retry, time.time(), code))
+                        if not retry and rank == 8:
+                            cursor += 1
+                            put_meta(db, 'cursor', cursor)
+                        put_meta(db, 'lastRun', run)
+                    empty_streak = empty_streak + 1 if status == 'unavailable' else 0
+                    if empty_streak >= 12:
+                        break
+                run['status'] = 'ok'
+            except Exception:
+                # Do not expose credentials, upstream messages or raw player IDs.
+                run['status'] = 'error'
+                run['error'] = '上游取数失败，本轮已停止；下轮从保存的位置继续。'
+            finally:
+                run['finishedAt'] = int(time.time() * 1000)
+                with db:
+                    put_meta(db, 'lastRun', run)
+            return run
+
+
+def coverage(db):
+    bounds = db.execute('SELECT MIN(end_ts),MAX(end_ts),COUNT(*),COUNT(DISTINCT code_id) FROM matches').fetchone()
+    states = dict(db.execute('SELECT status,COUNT(*) FROM scan GROUP BY status').fetchall())
+    sparse = db.execute('SELECT COUNT(*) FROM (SELECT code_id FROM matches GROUP BY code_id HAVING COUNT(*)<8)').fetchone()[0]
+    return {'earliestEnd': bounds[0], 'latestEnd': bounds[1], 'playerMatches': bounds[2], 'games': bounds[3],
+            'gamesWithFewerThanEight': sparse,
+            'scanStartCode': meta(db, 'startCode'), 'nextCode': meta(db, 'cursor'),
+            'scannedCodes': sum(states.values()), 'states': states, 'lastRun': meta(db, 'lastRun'),
+            'intervalSeconds': 600, 'complete': False,
+            'scope': '按复盘编号增量扫描，含不可取记录和重复玩家；尚不能保证全服或完整赛季覆盖。'}
+
+
+def query(store, params):
+    def number(key, default, low, high):
+        try:
+            value = int(params.get(key, [str(default)])[0])
+        except (TypeError, ValueError):
+            raise ValueError('筛选参数无效')
+        if not low <= value <= high:
+            raise ValueError('筛选参数超出范围')
+        return value
+    now = int(time.time() * 1000)
+    start = number('from', now - 7 * 86400000, 0, 4102444800000)
+    end = number('to', now + 60000, 0, 4102444800000)
+    low = number('minScore', 3000, 0, 100000)
+    high = number('maxScore', 4000, 1, 100001)
+    character = number('character', 0, 0, 99999999)
+    minimum = number('minGames', 5, 1, 100000)
+    offset = number('offset', 0, 0, 10000000)
+    limit = number('limit', 50, 1, 100)
+    search = str(params.get('q', [''])[0])[:80]
+    sort = str(params.get('sort', ['count'])[0])
+    sort_sql = {'count': 'matches DESC,net DESC', 'average': 'average DESC,matches DESC',
+                'net': 'net DESC,matches DESC', 'hourly': 'hourly DESC,matches DESC'}.get(sort)
+    if not sort_sql or start >= end or low >= high:
+        raise ValueError('请检查时间、积分范围或排序选项')
+    where = 'end_ts>=? AND end_ts<? AND score_before>=? AND score_before<?'
+    values = [start, end, low, high]
+    aggregate = '''COUNT(*) AS matches, SUM(score_delta) AS net,
+        1.0*SUM(score_delta)/COUNT(*) AS average,
+        SUM(end_ts-begin_ts)/60000.0 AS minutes,
+        SUM(score_delta)*3600000.0/SUM(end_ts-begin_ts) AS hourly'''
+    with contextlib.closing(connect(store)) as db:
+        status = coverage(db)
+        total = dict(db.execute('SELECT '+aggregate+',COUNT(DISTINCT code_id) AS games,COUNT(DISTINCT player_id) AS players FROM matches WHERE '+where, values).fetchone())
+        chars = [dict(r) for r in db.execute(
+            'SELECT character_id AS id,'+aggregate+' FROM matches WHERE '+where+' GROUP BY character_id ORDER BY matches DESC,id', values)]
+        for char in chars:
+            char['share'] = char['matches'] / total['matches'] if total['matches'] else 0
+            char['eligible'] = char['matches'] >= minimum
+        pw = where + (' AND character_id=?' if character else '')
+        pv = values + ([character] if character else [])
+        if search:
+            # Find players by any recorded alias, then count all their selected games.
+            search_where, search_values = pw, list(pv)
+            pw += " AND player_id IN (SELECT player_id FROM matches WHERE " + search_where + " AND name LIKE ? ESCAPE '\\')"
+            pv.extend(search_values)
+            pv.append('%'+search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')+'%')
+        count = db.execute('SELECT COUNT(DISTINCT player_id) FROM matches WHERE '+pw, pv).fetchone()[0]
+        # A player's latest recorded name within this selection, not an arbitrary GROUP BY name.
+        player_sql = ('WITH filtered AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY player_id ORDER BY end_ts DESC,code_id DESC) AS rn FROM matches WHERE '+pw+') '
+                      'SELECT player_id AS id,MAX(CASE WHEN rn=1 THEN name END) AS name,'+aggregate+
+                      ' FROM filtered GROUP BY player_id ORDER BY '+sort_sql+',player_id LIMIT ? OFFSET ?')
+        players = [dict(r) for r in db.execute(player_sql, pv+[limit, offset])]
+        if players:
+            ids = [p['id'] for p in players]
+            role_rows = db.execute('SELECT player_id,character_id AS id,'+aggregate+' FROM matches WHERE '+pw+
+                                  ' AND player_id IN ('+','.join('?' for _ in ids)+') GROUP BY player_id,character_id ORDER BY matches DESC,character_id', pv+ids)
+            grouped = {}
+            for r in role_rows:
+                role = dict(r)
+                grouped.setdefault(role.pop('player_id'), []).append(role)
+            for p in players:
+                p['characters'] = grouped.get(p['id'], [])
+                p['eligible'] = p['matches'] >= minimum
+        return {'filters': {'from': start, 'to': end, 'minScore': low, 'maxScore': high,
+                            'character': character, 'minGames': minimum, 'sort': sort, 'q': search},
+                'generatedAt': now, 'coverage': status, 'summary': total, 'characters': chars,
+                'players': players, 'playerCount': count, 'offset': offset, 'limit': limit}

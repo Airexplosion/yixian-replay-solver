@@ -1,9 +1,10 @@
 # 弈仙复盘
 
-粘贴游戏复盘代码，自动还原各轮双方的牌桌、手牌和开战仙命，在浏览器里限时搜索摆法。另有按赛季显示的天梯总榜。
+粘贴游戏复盘代码，自动还原各轮双方的牌桌、手牌和开战仙命，在浏览器里限时搜索摆法。另有赛季天梯总榜与角色上分统计。
 
 - [复盘求解](https://airexplosion.github.io/yixian-replay-solver/)
 - [赛季天梯榜](https://airexplosion.github.io/yixian-replay-solver/ladder.html)
+- [角色上分统计](https://airexplosion.github.io/yixian-replay-solver/characters.html)
 
 网页由 GitHub Pages 托管。首次打开先下载 .NET WebAssembly sim 和卡牌规则，加载完成才开放操作。求解在 Web Worker 中执行，可以停止；不需要安装游戏。复盘代码通过取数服务换成盘面数据，服务只返回求解所需状态，不返回账户令牌或原始玩家 UID。
 
@@ -12,6 +13,16 @@
 这是 C# sim 的浏览器实验版，基于目前拿到的源码移植，并非原生求解器 v0.2.6 的完整源码。部分机制仍有偏差；含尚未移植的仙魔策略时会拒绝求解。限时推荐也不保证全局最优。请用游戏实战复核。
 
 天梯页面使用游戏天梯总榜入口 `gameData/fetchLeaderboard` 的 `category=0`，按赛季保存官方返回的前 100 名。随机角色道心榜在这个接口里用 `category=-1`。服务器约每 10 分钟采集，页面增减值是相邻快照的净变化；新上榜玩家无前一次基线时显示“—”。它不覆盖所有玩家，也不提供每场加减分。
+
+## 角色战绩统计
+
+角色统计页支持自选起止时间、开局积分范围、角色、玩家名称和样本门槛。显示已采集场数、角色使用占比、累计净分、场均净分和每小时净分；展开玩家可以查看各角色使用情况。时间统一为香港时间（UTC+8），按结算时间筛选，包含开始、不包含结束；积分范围按每局开局积分筛选，上限不含。
+
+每小时净分用总净分除以总对局耗时计算，不含排队时间。扣分和 0 分也计入。场数按复盘编号＋玩家去重，回放的多轮不会被计成多局。样本不足时会显示提示；各分段的样本数量及采集缺失会影响比较结果。
+
+后台每 10 分钟按复盘编号继续扫描，保存断点并重试不可取的记录。尚未验证全服最新对局索引或按时间批量查询接口，不能保证采到全服全部场次、完整赛季或任意历史时段；时间筛选只查询已有数据。每轮最多 250 个请求 / 450 秒，保留采集进度供页面查看，不把吞吐上限或缺失记录当成完整覆盖。
+
+精简数据保存在 `YX_REPLAY_STORE/rank-stats.sqlite3`：匿名玩家标识、公开名称、角色、起止时间、开局积分、净加减分、游戏版本和随机角色标记。整份原始回放只在内存中短暂处理，不写入统计存储；提取后释放。这个统计库不能用于还原完整盘面，复盘求解仍需重新从游戏服务取回回放。
 
 ## 本地构建
 
@@ -33,10 +44,17 @@ python -m http.server 8765 --bind 127.0.0.1 --directory dist
 
 ```sh
 python3 api/replay_service.py --collect-ladder
+YX_STATS_START_CODE=<已验证的起始编号> python3 api/replay_service.py --collect-stats
 python3 api/replay_service.py --port 8443
 ```
 
 提供 `/api/v1/replays/{code}`、`/api/v1/ladder?season=11`、`/api/v1/ladder/seasons` 和快照索引 `/api/v1/ladder/history?season=11`。systemd 示例在 `api/`，部署时按实际机器修改路径。接口只允许 GET，带请求频率限制。HTTPS IP 证书的续期由服务器既有证书任务负责，服务会重新载入更新后的证书。
+
+### 统计接口与调度
+
+统计接口为 `/api/v1/stats?from=<毫秒时间戳>&to=<毫秒时间戳>&minScore=3000&maxScore=4000&character=0&minGames=5`。`character=0` 表示玩家列表含全部角色；角色汇总始终覆盖所选时间与分段内的全部角色。支持 `q` 搜索名称、`sort=count|average|hourly|net`、`offset`、`limit` 分页（每页最多 100 人）。返回采集范围与缺失状态，不暴露原始 UID。
+
+`yx-rank-stats.timer` 使用整十分钟调度；部署前在 `/root/yx-replay/rank-stats.env` 中设置 `YX_STATS_START_CODE`，可选设置 `YX_STATS_MAX_CALLS` 和 `YX_STATS_SECONDS`。采集器使用进程锁防止重叠；统计采集、回放取数和榜单采集共享上游请求锁与至少 1.6 秒间隔。失败不会删除已提交的精简战绩。
 
 ## 来源
 

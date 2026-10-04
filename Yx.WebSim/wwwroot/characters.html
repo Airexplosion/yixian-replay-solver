@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>角色上分统计 · 弈仙复盘</title><meta name="description" content="按时间和开局分段，查看角色使用率、场均净上分和玩家战绩统计。">
+<link rel="icon" href="favicon.svg"><link rel="stylesheet" href="style.css"><script type="module" src="characters.js"></script></head>
+<body>
+<header class="masthead"><a class="brand" href="./"><span class="seal">弈</span><span>弈仙复盘<small>角色 · 使用 · 上分</small></span></a><nav class="page-nav"><a href="ladder.html">赛季天梯榜</a><a href="./">复盘求解 ↗</a></nav></header>
+<main>
+<section class="intro"><div><p class="eyebrow">CHARACTER PERFORMANCE</p><h1>这一段时间，谁在上分？</h1><p class="muted">从已采集的排位战绩，看角色使用和净上分效率。</p></div><span class="engine-pill">每 10 分钟采集</span></section>
+<form id="filters" class="import-panel stats-filter">
+<div class="filter-head"><h2>选择统计范围</h2><div class="preset-buttons"><button type="button" data-days="today">今天</button><button type="button" data-days="1">近 24 小时</button><button type="button" data-days="7" aria-pressed="true">近 7 天</button><button type="button" data-days="30">近 30 天</button></div></div>
+<div class="filter-grid">
+<label>开始时间<input id="from" type="datetime-local" required></label>
+<label>结束时间<input id="to" type="datetime-local" required></label>
+<label>开局积分下限<input id="min-score" type="number" min="0" max="100000" value="3000" required></label>
+<label>开局积分上限（不含）<input id="max-score" type="number" min="1" max="100001" value="4000" required></label>
+<label>比较所需样本<select id="min-games"><option value="1">至少 1 场</option><option value="5" selected>至少 5 场</option><option value="20">至少 20 场</option><option value="50">至少 50 场</option></select></label>
+<button id="apply" class="primary" type="submit">查看统计 ↗</button>
+</div><p class="muted filter-note">时间统一为香港时间（UTC+8），按对局结算时间筛选：包含开始，不包含结束。分段按每局开局积分划分。</p>
+</form>
+<p id="message" role="status">正在读取已采集战绩…</p>
+<section id="stats-content" hidden>
+<div id="summary" class="metric-grid"></div>
+<section class="side-panel coverage-panel"><div class="coverage-heading"><strong>采集覆盖情况</strong><span id="run-state" class="sample-badge"></span></div><p id="coverage" class="muted"></p><details><summary>统计口径与缺失记录</summary><p id="scan-detail"></p><p>这里只统计已采集、能验证玩家身份的排位战绩，不代表全服全部场次。相同对局与玩家只计一次；包含扣分和 0 分。每小时净分 = 总净分 ÷ 总对局耗时，不含排队时间。时间筛选不会自动补齐尚未采集的历史战绩。</p></details></section>
+<section class="side-panel character-section"><div class="section-heading"><div><p class="eyebrow">BY CHARACTER</p><h2>角色使用与上分</h2></div><label class="inline-control">角色排序<select id="role-sort"><option value="matches">使用场数</option><option value="average">场均净分</option><option value="hourly">每小时净分</option><option value="net">累计净分</option></select></label></div><p class="muted table-note">每个样本是一名玩家的一局战绩。点击角色，可在下方查看对应玩家；样本不足的角色放在效率排序后面。</p>
+<div class="table-scroll"><table class="ladder-table role-table"><thead><tr><th>角色</th><th>已采集场数 / 使用占比</th><th>累计净分</th><th>场均净分</th><th>每小时净分</th><th>样本</th></tr></thead><tbody id="roles"></tbody></table></div><p id="role-empty" class="table-empty" hidden>这个范围内还没有可用战绩。可以扩大时间或积分范围。</p></section>
+<section class="side-panel"><div class="section-heading"><div><p class="eyebrow">BY PLAYER</p><h2 id="player-title">玩家战绩</h2></div></div>
+<form id="player-filter" class="player-controls"><label>查看角色<select id="character"><option value="0">全部角色</option></select></label><label>玩家名称<input id="player-search" type="search" maxlength="80" placeholder="搜索已采集玩家"></label><label>玩家排序<select id="player-sort"><option value="count">已采集场数</option><option value="average">场均净分</option><option value="hourly">每小时净分</option><option value="net">累计净分</option></select></label><button id="player-apply" type="submit">筛选玩家</button></form>
+<p class="muted table-note">展开玩家可查看各角色使用次数和场均净分。以下场数仅属于所选时间、分段与角色。</p>
+<div class="table-scroll"><table class="ladder-table player-table"><thead><tr><th>玩家</th><th>已采集场数</th><th>常用角色</th><th>累计净分</th><th>场均净分</th><th>每小时净分</th></tr></thead><tbody id="players"></tbody></table></div><p id="player-empty" class="table-empty" hidden>没有符合条件的玩家样本。</p>
+<div class="pagination"><span id="page-info" class="muted"></span><div><button id="previous" type="button">上一页</button><button id="next" type="button">下一页</button></div></div>
+</section></section>
+<footer><span>精简战绩统计 · 不保存整份回放 · 尚不能保证全服覆盖</span><a href="https://github.com/Airexplosion/yixian-replay-solver">项目源码 ↗</a></footer>
+</main></body></html>

@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect compact ranked match results
+After=network-online.target
+[Service]
+Type=oneshot
+WorkingDirectory=/root/yx-replay
+EnvironmentFile=/root/yx-replay/rank-stats.env
+ExecStart=/usr/bin/python3 /root/yx-replay/replay_service.py --collect-stats
+TimeoutStartSec=9min
+NoNewPrivileges=true
+PrivateTmp=true
+

@@ -1,0 +1,8 @@
+[Unit]
+Description=Collect compact ranked results every ten minutes
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/10
+Persistent=true
+[Install]
+WantedBy=timers.target
