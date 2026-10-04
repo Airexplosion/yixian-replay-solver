@@ -119,7 +119,9 @@ async function importInput(){
     if(!/^[a-z0-9]{5,14}$/i.test(text))throw Error('复盘代码应为字母和数字，或粘贴完整 JSON。');
     if(!state.api)throw Error('复盘 API 尚未配置，请先导入完整盘面数据。');
     state.busy=true; controls();message('正在获取复盘各轮盘面…');
-    const response=await fetch(`${state.api}/replays/${encodeURIComponent(text)}`,{signal:AbortSignal.timeout(60000)});
+    const url=`${state.api}/replays/${encodeURIComponent(text)}`;
+    let response=await fetch(url,{signal:AbortSignal.timeout(60000)});
+    if(response.status===429){await new Promise(r=>setTimeout(r,1100));response=await fetch(url,{signal:AbortSignal.timeout(60000)});}
     const data=await response.json();if(!response.ok)throw Error(data.error||`复盘获取失败（${response.status}）`);
     importData(data);
   }catch(error){message(error instanceof TypeError?'暂时连不上复盘取数服务，请稍后重试。你的复盘代码还没有被判定为无效。':error.message,true);}
@@ -152,4 +154,6 @@ $('round').onchange=$('perspective').onchange=()=>{try{selectRound();}catch(e){s
 $('demo').onclick=async()=>{try{importData(await checkedFetch('data/demo.json').then(r=>r.json()));}catch(e){message(e.message,true);}};
 $('open-file').onclick=()=>$('file').click();$('file').onchange=async()=>{try{const f=$('file').files[0];if(!f)return;if(f.size>5_000_000)throw Error('文件超过 5 MB。');$('replay-input').value=await f.text();await importInput();}catch(e){message(e.message,true);}finally{$('file').value='';}};
 $('cancel').onclick=async()=>{state.worker.terminate();state.ready=false;resetSearch();message('已停止求解，正在重新准备 sim。');try{await startWorker();message('已停止求解，可以重新开始。');}catch(e){message(e.message,true);$('retry').hidden=false;}};
-boot();
+const linkedCode=new URLSearchParams(location.search).get('code');
+if(linkedCode&&/^[a-z0-9]{5,14}$/i.test(linkedCode))$('replay-input').value=linkedCode;
+boot().then(()=>{if(state.ready&&linkedCode&&/^[a-z0-9]{5,14}$/i.test(linkedCode))return importInput();});

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>玩家逐场战绩 · 弈仙复盘</title><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="style.css"><script type="module" src="player.js"></script></head>
+<body><header class="masthead"><a class="brand" href="./"><span class="seal">弈</span><span>弈仙复盘<small>玩家 · 逐场 · 战绩</small></span></a><nav class="page-nav"><a id="back-ladder" href="ladder.html">返回天梯榜</a><a href="characters.html">角色上分统计</a></nav></header>
+<main><section class="intro"><div><p class="eyebrow">PLAYER MATCH HISTORY</p><h1 id="player-name">玩家逐场战绩</h1><p id="source" class="muted">查看已采集的排位对局。</p></div><span class="engine-pill">精简战绩 · 每 10 分钟采集</span></section>
+<form id="filters" class="import-panel stats-filter"><div class="filter-head"><h2>逐场战绩</h2><div class="preset-buttons"><button type="button" id="all-time">全部已采集</button><button type="button" id="last-week">近 7 天</button></div></div>
+<div class="filter-grid history-filter"><label>开始时间<input id="from" type="datetime-local" required></label><label>结束时间<input id="to" type="datetime-local" required></label><label>角色<select id="character" aria-label="角色"><option value="0">全部角色</option></select></label><label>开局积分下限<input id="min-score" type="number" min="0" max="100000" value="0" required></label><label>开局积分上限（不含）<input id="max-score" type="number" min="1" max="100001" value="100001" required></label><button id="apply" class="primary" type="submit">查看战绩 ↗</button></div>
+<p class="muted filter-note">时间为香港时间（UTC+8），按结算时间筛选，包含开始、不包含结束。榜单赛季用于查看排名；以下战绩按所选时间范围查询。</p></form>
+<p id="message" role="status">正在获取玩家战绩…</p>
+<section id="history-content" hidden><div class="metric-grid" id="summary"></div>
+<section class="side-panel coverage-panel"><strong>已采集范围</strong><p class="muted" id="coverage"></p><p class="muted">仅含已采集战绩，不能代表这名玩家实际打过的全部场次。原始回放不保存在统计库，打开盘面时会重新向游戏服务取数。</p></section>
+<section class="side-panel"><div class="section-heading"><div><p class="eyebrow">MATCH BY MATCH</p><h2>对局明细</h2></div><span class="muted table-note">最新结算在前</span></div>
+<div class="table-scroll"><table class="ladder-table history-table"><thead><tr><th>对局时间</th><th>角色</th><th>开局积分</th><th>净加减分</th><th>结算后积分</th><th>耗时</th><th>复盘</th></tr></thead><tbody id="matches"></tbody></table></div>
+<p id="empty" class="table-empty" hidden></p><div class="pagination"><span id="page-info" class="muted"></span><div><button id="previous" type="button">上一页</button><button id="next" type="button">下一页</button></div></div>
+<p class="muted table-note">展开对局时间可查看开始时间、对局编号、选角标记和版本。早期未保存复盘入口的记录仅提供统计明细；游戏服务不可取的回放可能无法打开。</p></section></section>
+<footer><span>玩家标识已匿名处理 · 对局＋玩家去重</span><a href="ladder.html">赛季天梯榜 ↗</a></footer></main></body></html>

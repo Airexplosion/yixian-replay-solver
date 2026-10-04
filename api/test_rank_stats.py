@@ -1,6 +1,8 @@
 import json
 import sys
 import tempfile
+import hashlib
+import contextlib
 import unittest
 from pathlib import Path
 import rank_stats as stats
@@ -84,6 +86,40 @@ class RankStatsTests(unittest.TestCase):
         self.assertEqual(page['playerCount'], 2)
         self.assertEqual(len(page['players']), 1)
         self.assertEqual(page['players'][0]['matches'], 1)
+
+    def test_player_history_isolates_identity_and_filters_pagination(self):
+        stats.record_replay(self.store, record(code=10, delta=-10), lookup_rank=5)
+        stats.record_replay(self.store, record(code=11, char=4000003, begin=2000000, delta=30))
+        stats.record_replay(self.store, record(code=12, uid='another-player', delta=200))
+        player = hashlib.sha256(b'private-a').hexdigest()[:20]
+        result = stats.player_history(self.store, player, {'to': ['9999999'], 'limit': ['1']})
+        self.assertEqual(result['player']['totalCollected'], 2)
+        self.assertEqual(result['summary']['net'], 20)
+        self.assertEqual(result['matches'][0]['codeId'], 11)
+        self.assertIsNone(result['matches'][0]['replayCode'])
+        page = stats.player_history(self.store, player, {'to': ['9999999'], 'limit': ['1'], 'offset': ['1']})
+        self.assertEqual(page['matches'][0]['scoreAfter'], 3490)
+        from replay_service import decode_code
+        plain, selected = decode_code(page['matches'][0]['replayCode'])
+        self.assertEqual(int(plain, 36), 10005)
+        self.assertEqual(selected, 0)
+        filtered = stats.player_history(self.store, player, {'from': ['1600000'], 'to': ['2600000'], 'character': ['1000006']})
+        self.assertEqual(filtered['summary']['matches'], 1)
+        self.assertNotIn('private-a', json.dumps(result))
+        self.assertNotIn('another-player', json.dumps(result))
+        self.assertNotIn('roundStats', json.dumps(result))
+
+    def test_lookup_entry_can_be_backfilled_without_overwriting_result(self):
+        stats.record_replay(self.store, record())
+        stats.record_replay(self.store, record(), lookup_rank=3)
+        stats.record_replay(self.store, record(), lookup_rank=7)
+        with contextlib.closing(stats.connect(self.store)) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM matches').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT lookup_rank FROM record_links').fetchone()[0], 3)
+        empty = stats.player_history(self.store, '0'*20, {})
+        self.assertEqual(empty['summary']['matches'], 0)
+        with self.assertRaises(ValueError):
+            stats.player_history(self.store, 'private-a', {})
 
     @unittest.skipIf(sys.platform == 'win32', 'Linux collector lock')
     def test_collector_resumes_without_counting_repeated_player(self):

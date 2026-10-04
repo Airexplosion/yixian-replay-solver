@@ -65,17 +65,18 @@ function roles(data) {
   }));
   $('role-empty').hidden=sorted.length>0;
 }
-function roleDetails(p) {
+function roleDetails(p,filters) {
   const details=document.createElement('details');details.className='player-detail';
   const title=document.createElement('summary');title.textContent=p.name;details.append(title);
   const list=document.createElement('ul');
   p.characters.forEach(r=>{const li=document.createElement('li');li.textContent=`${roleName(r.id)}：${r.matches} 场（${number(r.matches/p.matches*100,1)}%） · 场均 ${points(r.average)} · 每小时 ${points(r.hourly)}`;list.append(li);});
-  details.append(list);return details;
+  const link=document.createElement('a');link.className='player-link';link.textContent='查看逐场战绩 ↗';link.href=`player.html?${new URLSearchParams({id:p.id,name:p.name,...filters})}`;
+  details.append(list,link);return details;
 }
 function players(data) {
   const char=Number($('character').value);$('player-title').textContent=char?`${roleName(char)} · 玩家战绩`:'玩家战绩 · 全部角色';
   $('players').replaceChildren(...data.players.map(p=>{
-    const tr=document.createElement('tr'), identity=cell('');identity.append(roleDetails(p));
+    const tr=document.createElement('tr'), identity=cell('');identity.append(roleDetails(p,data.filters));
     const count=cell(number(p.matches));if(!p.eligible){const badge=document.createElement('small');badge.className='small-sample';badge.textContent='样本不足';count.append(document.createElement('br'),badge);}
     const most=p.characters[0];tr.append(identity,count,cell(most?`${roleName(most.id)} · ${most.matches} 场`:'—'),pointCell(p.net),pointCell(p.average),pointCell(p.hourly));return tr;
   }));

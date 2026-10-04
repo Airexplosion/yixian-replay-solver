@@ -101,7 +101,7 @@ def replay(code):
             CACHE.move_to_end(plain); return saved[1]
     data=upstream('/gameStat/fetchPlayerBattleInfo',{'code':plain})
     result=normalize_replay(data,selected)
-    try: rank_stats.record_replay(STORE,data)
+    try: rank_stats.record_replay(STORE,data,lookup_rank=int(plain,36)%10)
     except (ValueError,OSError): pass
     data=None
     with CACHE_LOCK:
@@ -172,6 +172,9 @@ class Handler(BaseHTTPRequestHandler):
             if match: return self.send(200,replay(match[1]))
             if url.path=='/api/v1/stats':
                 return self.send(200,rank_stats.query(STORE,parse_qs(url.query)))
+            player_match=re.fullmatch(r'/api/v1/players/([a-f0-9]{20})/matches',url.path)
+            if player_match:
+                return self.send(200,rank_stats.player_history(STORE,player_match[1],parse_qs(url.query)))
             if url.path=='/api/v1/ladder':
                 season=int(parse_qs(url.query).get('season',['11'])[0]);path=ladder_path(season)/'latest.json'
                 if not path.exists(): return self.send(404,{'error':'这个赛季还没有采集快照'})

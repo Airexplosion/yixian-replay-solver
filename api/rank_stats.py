@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import time
 
@@ -23,6 +24,10 @@ def connect(store):
           random_character INTEGER NOT NULL, version TEXT NOT NULL,
           PRIMARY KEY(code_id, player_id));
         CREATE INDEX IF NOT EXISTS matches_time ON matches(end_ts, score_before);
+        CREATE INDEX IF NOT EXISTS matches_player_time ON matches(player_id, end_ts);
+        CREATE TABLE IF NOT EXISTS record_links (
+          code_id INTEGER NOT NULL, player_id TEXT NOT NULL, lookup_rank INTEGER NOT NULL,
+          PRIMARY KEY(code_id, player_id), CHECK(lookup_rank BETWEEN 0 AND 7));
         CREATE TABLE IF NOT EXISTS scan (
           code_id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending',
           next_rank INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
@@ -79,7 +84,7 @@ def compact_match(data, expected_code=None):
             str(data.get('version') or '')[:40])
 
 
-def save_match(db, data, expected_code=None):
+def save_match(db, data, expected_code=None, lookup_rank=None):
     row = compact_match(data, expected_code)
     if row is None:
         return False
@@ -87,14 +92,19 @@ def save_match(db, data, expected_code=None):
     existing = db.execute('SELECT character_id,begin_ts,end_ts,score_before,score_delta FROM matches WHERE code_id=? AND player_id=?', row[:2]).fetchone()
     if existing and tuple(existing) != (row[3], row[4], row[5], row[6], row[7]):
         raise ValueError('conflicting duplicate result')
+    if lookup_rank is not None and (type(lookup_rank) is not int or not 0 <= lookup_rank <= 7):
+        raise ValueError('invalid lookup entry')
     db.execute('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?,?)', row)
+    if lookup_rank is not None:
+        # Save the actual requested entry, never infer final placement from battleRank.
+        db.execute('INSERT OR IGNORE INTO record_links VALUES (?,?,?)', (*row[:2], lookup_rank))
     return not bool(existing)
 
 
-def record_replay(store, data):
+def record_replay(store, data, lookup_rank=None):
     with contextlib.closing(connect(store)) as db:
         with db:
-            return save_match(db, data)
+            return save_match(db, data, lookup_rank=lookup_rank)
 
 
 def base36(number):
@@ -103,6 +113,65 @@ def base36(number):
         number, r = divmod(number, 36)
         result = '0123456789abcdefghijklmnopqrstuvwxyz'[r] + result
     return result
+
+
+def share_code(code_id, lookup_rank):
+    raw = str(code_id * 1000 + lookup_rank)
+    return base36(int(raw[0] + raw[:0:-1]) ^ 0x5FF17843B6B1F)
+
+
+def player_history(store, player_id, params):
+    if not re.fullmatch(r'[a-f0-9]{20}', player_id):
+        raise ValueError('玩家标识无效')
+    def number(key, default, low, high):
+        try:
+            value = int(params.get(key, [str(default)])[0])
+        except (TypeError, ValueError):
+            raise ValueError('筛选参数无效')
+        if not low <= value <= high:
+            raise ValueError('筛选参数超出范围')
+        return value
+    now = int(time.time() * 1000)
+    start = number('from', 0, 0, 4102444800000)
+    end = number('to', now + 60000, 0, 4102444800000)
+    low = number('minScore', 0, 0, 100000)
+    high = number('maxScore', 100001, 1, 100001)
+    character = number('character', 0, 0, 99999999)
+    offset = number('offset', 0, 0, 10000000)
+    limit = number('limit', 50, 1, 100)
+    if start >= end or low >= high:
+        raise ValueError('请检查时间或积分范围')
+    where = 'm.player_id=? AND m.end_ts>=? AND m.end_ts<? AND m.score_before>=? AND m.score_before<?'
+    values = [player_id, start, end, low, high]
+    if character:
+        where += ' AND m.character_id=?'
+        values.append(character)
+    with contextlib.closing(connect(store)) as db:
+        db.execute('BEGIN')
+        bounds = db.execute('SELECT COUNT(*),MIN(end_ts),MAX(end_ts) FROM matches WHERE player_id=?', (player_id,)).fetchone()
+        name = db.execute('SELECT name FROM matches WHERE player_id=? ORDER BY end_ts DESC,code_id DESC LIMIT 1', (player_id,)).fetchone()
+        summary = dict(db.execute('''SELECT COUNT(*) AS matches, SUM(score_delta) AS net,
+            1.0*SUM(score_delta)/COUNT(*) AS average, SUM(end_ts-begin_ts)/60000.0 AS minutes,
+            SUM(score_delta)*3600000.0/SUM(end_ts-begin_ts) AS hourly FROM matches m WHERE '''+where, values).fetchone())
+        characters = [dict(r) for r in db.execute('''SELECT character_id AS id,COUNT(*) AS matches,
+            SUM(score_delta) AS net,1.0*SUM(score_delta)/COUNT(*) AS average
+            FROM matches m WHERE '''+where+' GROUP BY character_id ORDER BY matches DESC,character_id', values)]
+        rows = db.execute('''SELECT m.*,r.lookup_rank FROM matches m LEFT JOIN record_links r
+            ON m.code_id=r.code_id AND m.player_id=r.player_id WHERE '''+where+
+            ' ORDER BY m.end_ts DESC,m.code_id DESC LIMIT ? OFFSET ?', values+[limit, offset])
+        matches = []
+        for row in rows:
+            matches.append({'codeId': row['code_id'], 'characterId': row['character_id'],
+                'beginTs': row['begin_ts'], 'endTs': row['end_ts'], 'scoreBefore': row['score_before'],
+                'scoreChange': row['score_delta'], 'scoreAfter': row['score_before']+row['score_delta'],
+                'minutes': (row['end_ts']-row['begin_ts'])/60000,
+                'randomCharacter': bool(row['random_character']), 'version': row['version'],
+                'replayCode': share_code(row['code_id'], row['lookup_rank']) if row['lookup_rank'] is not None else None})
+        return {'player': {'id': player_id, 'name': name[0] if name else None,
+                          'totalCollected': bounds[0], 'earliestEnd': bounds[1], 'latestEnd': bounds[2]},
+                'filters': {'from': start, 'to': end, 'minScore': low, 'maxScore': high, 'character': character},
+                'summary': summary, 'characters': characters, 'matches': matches,
+                'offset': offset, 'limit': limit, 'generatedAt': now, 'coverage': coverage(db)}
 
 
 def collect(store, fetch, start_code=None, max_calls=250, seconds=450):
@@ -169,7 +238,7 @@ def collect(store, fetch, start_code=None, max_calls=250, seconds=450):
                         else:
                             try:
                                 with db:
-                                    added = save_match(db, data, code)
+                                    added = save_match(db, data, code, lookup_rank=rank)
                                 run['added'] += int(added)
                             except ValueError:
                                 # Unfinished/missing snapshot/conflicting result: retry later.
