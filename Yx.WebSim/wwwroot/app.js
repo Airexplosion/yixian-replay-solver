@@ -16,7 +16,12 @@ async function startWorker(){
   const worker=state.worker;
   return new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>{ worker.terminate(); reject(Error('sim 加载超时，请检查网络后重试。')); },120000);
-    worker.onerror=event=>{ clearTimeout(timeout); reject(Error(event.message||'浏览器求解器启动失败')); };
+    worker.onerror=event=>{
+      if(worker!==state.worker)return;
+      clearTimeout(timeout);const error=Error(event.message||'浏览器求解器运行失败');
+      if(!state.ready)reject(error);
+      else{state.ready=false;resetSearch();$('retry').hidden=false;$('engine-pill').textContent='sim 需要重载';message(error.message,true);}
+    };
     worker.onmessage=({data})=>{
       if(worker!==state.worker)return;
       if(data.type==='ready'){
@@ -24,13 +29,13 @@ async function startWorker(){
         $('engine-pill').textContent='sim 已就绪'; $('engine-pill').classList.add('ready');
         loading('求解器已准备好','sim 已在浏览器加载。导入复盘后即可开始求解。',100); controls(); resolve();
       } else if(data.type==='result'){
-        state.busy=false; clearInterval(state.timer); $('cancel').hidden=true; $('solve').textContent='开始求解 ✦'; controls();
+        resetSearch();
         if(!data.report.ok){ message(data.report.error||'求解失败',true); return; }
         showResults(data.report);
       } else if(data.type==='error'){
         clearTimeout(timeout);
         if(!state.ready)reject(Error(data.message));
-        else {state.busy=false;clearInterval(state.timer);$('cancel').hidden=true;controls();message(data.message,true);}
+        else {resetSearch();message(data.message,true);}
       }
     };
     worker.postMessage({type:'initialize',cards:state.cards,effects:state.effects});
@@ -141,9 +146,10 @@ function solve(){
     state.worker.postMessage({type:'solve',request});
   }catch(error){message(error.message,true);}
 }
+function resetSearch(){state.busy=false;clearInterval(state.timer);$('cancel').hidden=true;$('solve').textContent='开始求解 ✦';$('solve-note').textContent='按胜负与剩余血量排序；限时搜索不保证全局最优。复杂单场试算可能超过搜索预算。';controls();}
 $('import').onclick=importInput;$('solve').onclick=solve;$('retry').onclick=boot;
 $('round').onchange=$('perspective').onchange=()=>{try{selectRound();}catch(e){state.request=null;controls();message(e.message,true);}};
 $('demo').onclick=async()=>{try{importData(await checkedFetch('data/demo.json').then(r=>r.json()));}catch(e){message(e.message,true);}};
 $('open-file').onclick=()=>$('file').click();$('file').onchange=async()=>{try{const f=$('file').files[0];if(!f)return;if(f.size>5_000_000)throw Error('文件超过 5 MB。');$('replay-input').value=await f.text();await importInput();}catch(e){message(e.message,true);}finally{$('file').value='';}};
-$('cancel').onclick=async()=>{state.worker.terminate();clearInterval(state.timer);state.busy=false;state.ready=false;$('cancel').hidden=true;controls();message('已停止求解，正在重新准备 sim。');try{await startWorker();message('已停止求解，可以重新开始。');}catch(e){message(e.message,true);$('retry').hidden=false;}};
+$('cancel').onclick=async()=>{state.worker.terminate();state.ready=false;resetSearch();message('已停止求解，正在重新准备 sim。');try{await startWorker();message('已停止求解，可以重新开始。');}catch(e){message(e.message,true);$('retry').hidden=false;}};
 boot();
