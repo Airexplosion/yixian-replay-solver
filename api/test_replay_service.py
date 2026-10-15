@@ -2,6 +2,9 @@ import unittest
 import tempfile
 import json
 import time
+import threading
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 import replay_service
@@ -46,5 +49,56 @@ class ReplayTests(unittest.TestCase):
         player={'publicData':{'uid':'a','usedCards':[3]}}
         with self.assertRaises(ValueError):
             normalize_replay({'roundStats':[{'p1':player,'p2':player,'round':1}]})
+
+class ApiHttpTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = patch.object(replay_service, 'STORE', Path(self.temp.name))
+        self.rate = patch.object(replay_service, 'RATE', {})
+        self.store.start()
+        self.rate.start()
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), replay_service.Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+        self.rate.stop()
+        self.store.stop()
+        self.temp.cleanup()
+
+    def get(self, path, headers=None):
+        connection = HTTPConnection(*self.server.server_address, timeout=5)
+        try:
+            connection.request('GET', path, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            connection.close()
+
+    def test_api_directory_is_available_without_browser(self):
+        with patch.object(replay_service, 'upstream', side_effect=AssertionError('unexpected upstream')):
+            status, data = self.get('/api/v1')
+        self.assertEqual(status, 200)
+        self.assertEqual(data['mode'], 'api-only')
+        self.assertFalse(data['solver']['available'])
+        self.assertIn('/api/v1/collection', [item['path'] for item in data['endpoints']])
+
+    def test_collection_status_uses_stored_data_only(self):
+        with patch.object(replay_service, 'upstream', side_effect=AssertionError('unexpected upstream')):
+            status, data = self.get('/api/v1/collection')
+        self.assertEqual(status, 200)
+        self.assertEqual(data['coverage']['playerMatches'], 0)
+        self.assertFalse(data['coverage']['complete'])
+        self.assertIsInstance(data['generatedAt'], int)
+
+    def test_new_endpoints_observe_rate_limit(self):
+        self.assertEqual(self.get('/api/v1/')[0], 200)
+        self.assertEqual(self.get('/api/v1/collection')[0], 429)
+
+    def test_new_endpoints_observe_origin_allowlist(self):
+        self.assertEqual(self.get('/api/v1', {'Origin': 'https://untrusted.example'})[0], 403)
 
 if __name__=='__main__':unittest.main()

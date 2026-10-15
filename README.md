@@ -1,12 +1,14 @@
-# 弈仙复盘
+# 弈仙数据 API
 
-粘贴游戏复盘代码，自动还原各轮双方的牌桌、手牌和开战仙命，在浏览器里限时搜索摆法。另有赛季天梯总榜与角色上分统计。
+2026-10-15 起关闭 GitHub Pages 网站，停用网页发布流程。后台天梯与战绩采集、断点补查、SQLite 数据和统计分析继续运行，以 HTTPS JSON API 提供。
 
-- [复盘求解](https://airexplosion.github.io/yixian-replay-solver/)
-- [赛季天梯榜](https://airexplosion.github.io/yixian-replay-solver/ladder.html)
-- [角色上分统计](https://airexplosion.github.io/yixian-replay-solver/characters.html)
+- [API 入口](https://154.9.252.167:8443/api/v1)
+- [调用说明、参数与示例](API.md)
+- [采集状态与覆盖范围](https://154.9.252.167:8443/api/v1/collection)
 
-网页由 GitHub Pages 托管。首次打开先下载 .NET WebAssembly sim 和卡牌规则，加载完成才开放操作。求解在 Web Worker 中执行，可以停止；不需要安装游戏。复盘代码通过取数服务换成盘面数据，服务只返回求解所需状态，不返回账户令牌或原始玩家 UID。
+同一 IP 请求间隔至少一秒；无需 API 密钥。接口提供天梯、角色与玩家分析、逐场战绩和复盘盘面，不返回账户令牌或原始玩家 UID。原浏览器求解器源码保留作本地实验，不再发布网页，也没有服务器求解接口。GitHub Actions 只运行 API 测试。
+
+下文保留采集原理及旧浏览器实验版的本地构建说明，涉及网页的描述属于原实现。
 
 ## 当前范围
 
@@ -47,7 +49,7 @@ dotnet run --project tests/SimSmoke -c Release
 python -m http.server 8765 --bind 127.0.0.1 --directory dist
 ```
 
-`dist/` 是可独立托管的静态站点。`wwwroot/settings.json` 配置只读取数服务地址。推送 `main` 后，GitHub Actions 构建和发布。
+`dist/` 是本地实验用静态站点。`wwwroot/settings.json` 配置只读取数服务地址。推送 `main` 仅运行 API 测试，不再构建或发布网站。
 
 ## 取数服务
 

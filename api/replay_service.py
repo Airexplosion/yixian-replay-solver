@@ -1,5 +1,5 @@
-"""Replay-only gateway and seasonal rank snapshots. No credentials in responses."""
-import argparse, collections, datetime as dt, hashlib, json, os, pathlib, re, ssl, sys, threading, time
+"""Standalone replay, leaderboard and statistics API. No credentials in responses."""
+import argparse, collections, contextlib, datetime as dt, hashlib, json, os, pathlib, re, ssl, sys, threading, time
 import rank_stats
 import ladder_history
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -138,6 +138,28 @@ def replay(code):
 
 def ladder_path(season): return STORE/'ladder'/str(season)
 
+def collection_status():
+    """Read collection coverage in one SQLite snapshot, without calling upstream."""
+    with contextlib.closing(rank_stats.connect(STORE)) as db:
+        db.execute('BEGIN')
+        return {'generatedAt':int(time.time()*1000),'coverage':rank_stats.coverage(db)}
+
+def api_index():
+    return {'service':'yx-replay','version':'v1','mode':'api-only',
+            'basePath':'/api/v1','collectionIntervalSeconds':600,
+            'minimumRequestIntervalSeconds':1,
+            'endpoints':[
+                {'method':'GET','path':'/api/v1/health','description':'服务健康状态'},
+                {'method':'GET','path':'/api/v1/collection','description':'战绩采集进度、覆盖范围与缺口'},
+                {'method':'GET','path':'/api/v1/ladder/seasons','description':'已采集赛季'},
+                {'method':'GET','path':'/api/v1/ladder','description':'天梯榜；season、from、to 筛选'},
+                {'method':'GET','path':'/api/v1/ladder/history','description':'赛季快照索引；season 筛选'},
+                {'method':'GET','path':'/api/v1/stats','description':'角色与玩家上分分析、名称搜索和分页'},
+                {'method':'GET','path':'/api/v1/players/{id}/matches','description':'匿名玩家标识对应的逐场战绩'},
+                {'method':'GET','path':'/api/v1/replays/{code}','description':'复盘盘面与开战状态'}],
+            'documentation':'https://github.com/Airexplosion/yixian-replay-solver/blob/main/API.md',
+            'solver':{'available':False,'description':'原摆牌求解运行在浏览器中，当前 API 返回数据和统计分析'}}
+
 def collect_ladder():
     sys.path.insert(0,str(ROOT));from collector import config
     seasons=[config.SEASON_ID]
@@ -195,7 +217,9 @@ class Handler(BaseHTTPRequestHandler):
             RATE[ip]=now
         url=urlsplit(self.path)
         try:
-            if url.path=='/api/v1/health': return self.send(200,{'ok':True,'service':'yx-replay','sim':'browser'})
+            if url.path in ('/api/v1','/api/v1/'): return self.send(200,api_index())
+            if url.path=='/api/v1/health': return self.send(200,{'ok':True,'service':'yx-replay','sim':'browser','mode':'api-only'})
+            if url.path=='/api/v1/collection': return self.send(200,collection_status())
             match=re.fullmatch(r'/api/v1/replays/([a-zA-Z0-9]{5,14})',url.path)
             if match: return self.send(200,replay(match[1]))
             if url.path=='/api/v1/stats':
