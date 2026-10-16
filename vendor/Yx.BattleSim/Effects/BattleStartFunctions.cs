@@ -29,9 +29,9 @@ internal static class BattleStartFunctions
         if (szzz > 0) c.ModifyBuffValue(BuffType.SiZhanZhiZhi, szzz);
         CardOpeningFunctions.OnBattleStartHead(c);
         // 角色 4000005：开战带架势（仙命 335 → 棍，否则拳）。
-        if (c.CharacterId == 4000005)
+        if (c.CharacterId == 4000005 || c.HasXianMoStrategy(27023))
         {
-            if (c.HasFateStrategy(335)) c.ModifyBuffValue(BuffType.GunJiaShi, 1);
+            if (c.HasFateStrategy(335) || c.HasXianMoStrategy(7111)) c.ModifyBuffValue(BuffType.GunJiaShi, 1);
             else c.ModifyBuffValue(BuffType.QuanJiaShi, 1);
         }
         // 天赋 259：升级第一张「稀有度 0、可升级、不是 0 号」的牌。
@@ -53,7 +53,7 @@ internal static class BattleStartFunctions
             foreach (int t in talents) TalentOnBattleStart(c, t);
 
         // ── 天赋 198 / 仙命 338：卡 215 两侧空格填 216 / 217，余下的次数升级 215 本身 ──
-        if (c.HasTalent(198) || c.HasFateStrategy(338))
+        if (c.HasTalent(198) || c.HasFateStrategy(338) || c.HasXianMoStrategy(7061))
         {
             for (int i = 0; i < c.Board.Count; i++)
             {
@@ -73,6 +73,7 @@ internal static class BattleStartFunctions
 
         // ── 仙命开战（IL_2776）──
         FateStrategyFunctions.OnBattleStart(c);
+        XianMoStrategyFunctions.OnBattleStart(c);
 
         // ── 上回合永久 buff（IL_27d2 起；键就是 BuffType 的整数值）──
         LastRoundPermanentOnBattleStart(c);
@@ -158,6 +159,7 @@ internal static class BattleStartFunctions
             {
                 int n = op.At(0);
                 if (c.HasFateStrategy(166)) n++;
+                if (c.HasXianMoStrategy(23062)) n++;
                 c.ModifyTiPo(n);
                 break;
             }
@@ -194,7 +196,7 @@ internal static class BattleStartFunctions
                 if (c.PrivateTalentDatas.TryGetValue(current, out var yp) && yp.Count > 0)
                 {
                     WuXingFunctions.ActiveWuXingInName(c, cfg.CardName(yp[0]));
-                    if (c.HasFateStrategy(309) && yp.Count > 1) WuXingFunctions.ActiveWuXingInName(c, cfg.CardName(yp[1]));
+                    if ((c.HasFateStrategy(309) || c.HasXianMoStrategy(23058)) && yp.Count > 1) WuXingFunctions.ActiveWuXingInName(c, cfg.CardName(yp[1]));
                 }
                 break;
             case 203: c.ModifyBuffValue(BuffType.JiHuoMuLing, 1); break;
@@ -225,6 +227,15 @@ internal static class BattleStartFunctions
                 break;
             }
             case 248: c.ModifyBuffValue(BuffType.LianYun, op.At(0)); c.ModifyBuffValue(BuffType.YunHai, op.At(0)); break;
+            // ── 09-29 代码里新增的天赋（天赋表里暂时还没有，先照原码搬上）──
+            case 273: c.ModifyBuffValue(BuffType.XingYuan, op.At(0)); break;
+            case 277:
+            {
+                int n = WuXingFunctions.GetWuXingCountInDeck(c) * op.At(0);
+                if (n > 0) { c.ModifyMaxHp(n); c.ModifyHp(n); }
+                break;
+            }
+            case 279: c.ModifyBuffValue(BuffType.LingZhenHuiXiang, 1); break;
         }
     }
 

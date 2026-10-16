@@ -32,22 +32,20 @@ internal static class CostFunctions
         int num = CardEffects.CostOf(src, card);
         var cfg = src.Config;
 
-        // 天赋 153：不够的部分按 o[0] 扣血、o[1] 扣体魄（共鸣 50 免体魄），两样都付得起才替代。
+        // 天赋 153（灵涌不竭）：不够的部分按 o[0] 扣血，付得起才替代。
+        // 10-08：不再耗体魄（删掉了 o[1] 体魄消耗、共鸣 50 免体魄与体魄够不够的判定）。
         if (src.HasTalent(153) && num + src.Anima < 0)
         {
             int short1 = num + src.Anima;
             int hpCost = short1 * cfg.TalentOtherParams(153).At(0);
-            int tiPoCost = short1 * cfg.TalentOtherParams(153).At(1);
-            if (src.HasTalentResonance(50)) tiPoCost = 0;
-            if (Math.Abs(hpCost) < src.Hp && Math.Abs(tiPoCost) <= src.TiPo)
+            if (Math.Abs(hpCost) < src.Hp)
             {
                 num = -src.Anima;
                 src.ModifyHp(hpCost, canRevive: false, isCost: true);
-                if (tiPoCost < 0) src.ModifyTiPo(tiPoCost);
             }
         }
         // 共鸣 57 / 仙命 160：不够的部分用[脉]抵。
-        if ((src.HasTalentResonance(57) || src.HasFateStrategy(160)) && num + src.Anima < 0)
+        if ((src.HasTalentResonance(57) || src.HasFateStrategy(160) || src.HasXianMoStrategy(7115)) && num + src.Anima < 0)
         {
             int short2 = num + src.Anima;
             if (Math.Abs(short2) <= src.GetBuffValue(BuffType.Min))
@@ -65,6 +63,11 @@ internal static class CostFunctions
         if (src.HasFateStrategy(412) && cfg.CardName(card.Id).Contains("木灵") && num < 0)
         {
             src.ModifyHp(num * cfg.FateOtherParams(412).At(0), canRevive: false, isCost: true);
+            num = 0;
+        }
+        if (src.HasXianMoStrategy(23066) && cfg.CardName(card.Id).Contains("木灵") && num < 0)
+        {
+            src.ModifyHp(num * cfg.XianMoOtherParams(23066).At(0), canRevive: false, isCost: true);
             num = 0;
         }
         // 刻印 47：灵气不够且有星力 → 耗 1 星力得 2 灵气（不改 num）。
@@ -187,7 +190,7 @@ internal static class CostFunctions
                 src.ModifyBuffValue(BuffType.XiaCiBengQuanHaoShengMingShiZaoChengDengLiangShangHai, -1);
         }
         // 仙命 347 热血化气：本回合首次耗生命 +1 灵气（标记在回合 tick 里清）。
-        if (src.HasFateStrategy(347) && hc > 0 && !src.HasBuff(BuffType.ReXueHuaQiYiChuFa))
+        if ((src.HasFateStrategy(347) || src.HasXianMoStrategy(7118)) && hc > 0 && !src.HasBuff(BuffType.ReXueHuaQiYiChuFa))
         {
             src.ModifyBuffValue(BuffType.ReXueHuaQiYiChuFa, 1);
             src.ModifyAnima(1);

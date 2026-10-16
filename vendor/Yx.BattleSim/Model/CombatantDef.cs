@@ -26,6 +26,7 @@ public sealed partial class Combatant
         if (defDelta > 0 && HasTalent(38)) defDelta += Config.TalentOtherParams(38).At(0);
         if (defDelta > 0 && HasFateStrategy(26)) defDelta += Config.FateOtherParams(26).At(0);
         if (defDelta > 0 && HasFateStrategy(382)) defDelta++;
+        if (defDelta > 0 && HasXianMoStrategy(7133)) defDelta++;
         if (defDelta > 0 && Subs.IsTalentResonanceEffective(this, 20))
             defDelta += Config.ResonanceOtherParams(20).At(1);
         if (defDelta > 0 && Subs.IsTalentResonanceEffective(this, 75) && !Subs.CheckTalentResonanceTempFlag(this, 75))

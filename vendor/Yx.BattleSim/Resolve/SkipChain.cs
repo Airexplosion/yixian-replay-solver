@@ -74,6 +74,16 @@ internal static class SkipChain
                 flag = true;
             }
 
+            while (XianMoStrategyFunctions.Active(fc, 7116) && item.Slot == 4)
+            {
+                if (CardTypes.IsXingYi(fc, idOf(item))) fc.ModifyHp(cfg.XianMoOtherParams(7116).At(0));
+                item = Skip(fc, item); flag = true;
+            }
+            while (XianMoStrategyFunctions.Active(fc, 5010) && item.Slot >= 5 && !CardTypes.IsPuTongGongJi(idOf(item)))
+            {
+                fc.ModifyHp(-cfg.XianMoOtherParams(5010).At(1));
+                item = Skip(fc, item); flag = true;
+            }
             // ⑤ 几张「放在最后几格不出」的牌：9000015 / 350（倒数两格内、未用过）、202（最后一格）、
             //    11000017（第 o[0] 格）。跳过时标记 hadUsed。
             int unlock = GridFunctions.UnlockGrids(fc);

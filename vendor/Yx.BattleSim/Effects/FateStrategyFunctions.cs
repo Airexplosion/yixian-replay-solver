@@ -171,8 +171,11 @@ public static class FateStrategyFunctions
         {
             // 原码 GetWuXingCountInDeck()：卡组里五行种类数。早先读一个恒为 0 的占位字段，仙命 409 从没生效（b6_185 / 186 逐步对拍开局即分叉）。
             int n = cfg.FateOtherParams(409).At(0) * WuXingFunctions.GetWuXingCountInDeck(src);
-            src.ModifyMaxHp(n);
-            src.ModifyHp(n);
+            if (n > 0)   // 09-29 加的门：0 时不再空调 ModifyMaxHp/ModifyHp
+            {
+                src.ModifyMaxHp(n);
+                src.ModifyHp(n);
+            }
         }
         if (src.HasFateStrategy(412)) src.ModifyBuffValue(BuffType.JiHuoMuLing, 1);
         if (src.HasFateStrategy(416))
@@ -228,14 +231,14 @@ public static class FateStrategyFunctions
                 if (dmg > 0) CombatMath.ApplyDamage(src, foe, DamageInfo.Create(src, DamageType.Damage, dmg, skipWoundCheck: true));
             }
         }
-        if (src.HasFateStrategy(32) && baseId == 0)
+        if (src.HasFateStrategy(32) && CardTypes.IsPuTongGongJi(cardId))   // 10-08：baseId==0 → IsPuTongGongJi（含 286）
         {
             foe.ModifyBuffValue(BuffType.JiaGong, -cfg.FateOtherParams(32).At(0));
             foe.ModifyBuffValue(BuffType.HuTi, -cfg.FateOtherParams(32).At(0));
         }
-        if (src.HasFateStrategy(33) && baseId == 0 && !src.HadUsed(grid))
+        if (src.HasFateStrategy(33) && CardTypes.IsPuTongGongJi(cardId) && !src.HadUsed(grid))
             src.ModifyBuffValue(BuffType.HuTi, cfg.FateOtherParams(33).At(0));
-        if (src.HasFateStrategy(36) && baseId == 0) src.ModifyBuffValue(BuffType.JiaGong, cfg.FateOtherParams(36).At(0));
+        if (src.HasFateStrategy(36) && CardTypes.IsPuTongGongJi(cardId)) src.ModifyBuffValue(BuffType.JiaGong, cfg.FateOtherParams(36).At(0));
         // 剑阵护体（仙命 109 施加）：使用剑阵牌时扣一层，加防 o[1]、护体 o[2]（取仙命 109 的配置）。
         if (src.HasBuff(BuffType.JianZhenHuTi) && CardTypes.IsJianZhen(src, cardId))
         {

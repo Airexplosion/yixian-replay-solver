@@ -2,7 +2,7 @@
 
 基础地址：`https://154.9.252.167:8443/api/v1`
 
-原 GitHub Pages 网站已关闭，后台采集与分析继续运行。所有接口使用 `GET`，返回 UTF-8 JSON，无需 API 密钥。同一 IP 的请求间隔至少 1 秒，建议 1.2 秒；收到 429 时等待后重试。爬虫约每 10 分钟执行一轮，API 查询直接读取已采集数据，复盘接口会按需请求游戏服务。
+原 GitHub Pages 网站已关闭，后台采集、分析及多核求解独立运行。接口返回 UTF-8 JSON，无需 API 密钥。同一 IP 的请求间隔至少 1 秒，建议 1.2 秒；收到 429 时等待后重试。爬虫约每 10 分钟执行一轮，统计接口读取已采集数据，复盘接口按需请求游戏服务。求解使用 `POST` 提交、`GET` 轮询、`DELETE` 取消。
 
 ## 接口目录
 
@@ -19,7 +19,53 @@
 | `/ladder/history?season=11` | 历史快照文件名索引 | `seasonId`, `snapshots` |
 | `/stats` | 角色与玩家上分分析 | `filters`, `summary`, `characters`, `players`, `coverage` |
 | `/players/{id}/matches` | 指定玩家逐场战绩 | `player`, `summary`, `characters`, `matches`, `coverage` |
-| `/replays/{code}` | 复盘盘面、手牌与开战状态 | `version`, `selectedRound`, `rounds`, `match` |
+| `/replays/{code}` | 复盘盘面、手牌与开战状态 | `version`, `selectedRound`, `rounds`, `match`, `catalogVersion` |
+| `/solver` | 引擎版本、百家支持和可用核心数 | `version`, `cores`, `defaultThreads`, `modes`, `baijia` |
+| `/catalog` | 编号种类与数量；可按 `kind`、`q`、`offset`、`limit` 搜索 | `kinds` 或 `items` |
+| `/catalog/{kind}/{id}` | 指定编号的名称、详细效果与参数 | `id`, `kind`, `name`, `description`, `descriptionTemplate`, `otherParams` |
+
+## 百家之道摆牌求解
+
+当前使用与游戏内 2026-10-15 适配版相同的计算核心和规则数据，战绩版本 `001.0008.0002`。支持百家（`xianMoStrategies`、`xianMoTempDatas`）、天衍、仙命、刻印、共鸣、速度和死战规则。原 30 秒上限与单线程限制已移除。
+
+1. `GET /replays/{code}` 导入复盘，取需要轮次的 `rounds[i].request`，也可使用 MOD 导出的完整盘面 JSON。
+2. 对盘面设置 `threads`、`searchMode`、`first` 等参数。
+3. `POST /solve`，请求正文为盘面 JSON。成功返回 `202`、不可猜测的字符串 `job`、实际 `threads`、可用 `cores` 和轮询路径。
+4. `GET /solve/{job}` 查询进度与当前结果，建议间隔 2 秒。终态为 `done`、`cancelled` 或 `error`；终态可重复读取，不会取一次就删除。
+5. `DELETE /solve/{job}` 取消；随后继续查询至 `cancelled`。任务 ID 同时用于访问结果和取消，请自行保管。
+
+| 参数 | 说明 |
+| --- | --- |
+| `threads` | `0` 默认用全部可用服务端逻辑核；正数指定线程数，超过服务端可用核数时自动压到上限。实际值随任务返回。 |
+| `searchMode` | 默认 `exhaustive`：遍历全部合法摆法并持续排名，找到赢法仍继续；`existence`：找到任意赢法即停，否则遍历到底；`rank`：按时限和收敛条件给推荐。 |
+| `timeLimitMs` | 仅 `rank` 模式生效，默认 8000；可设为 60000、300000 等，不再限制 30 秒。完整遍历模式忽略此参数和 `exhaustiveLimit`。 |
+| `first` | 默认 `both`，双算先后手，等权排名；也支持 `me`、`foe`、`auto`（按每套摆法的速度判断）。 |
+| `deathFightMode` | `record` 保留历史战绩死战，默认；编辑盘面并按当前修为重算时用 `auto`，也支持 `tie`、`off`。 |
+| `topN` | 返回前几名，1–20，默认 5；双先后手时可能附加某一顺序独有的赢法。 |
+| `samples` | 随机参数抽样次数，1–100，默认 3；没有随机参数时每个先后手只算一次。 |
+
+`enumerated / candidates` 是完整遍历进度，`evaluated` 是实际战斗评估次数，双先后手和多个对手会增加此数。`best` 含牌序、排序分和各先后手战果，另带 `cardDetails`（卡名与完整效果）。`exhaustive=true` 才表示摆法空间已经遍历完；取消或找到赢法即停不会冒充全量完成。存在随机机制时，完整遍历不等于穷举所有随机分支。
+
+同一服务同时只运行一个求解任务，繁忙时返回 `409`。任务保持轮询即可一直运行，没有 30 秒总时限；连续 15 分钟没有查询的运行任务会自动取消以回收算力。完成结果在当前进程内保留至少一小时，API 重启会清理任务。采集器不因求解任务被停止。
+
+直接使用命令行客户端：
+
+```powershell
+python tools/solve_client.py --replay <复盘码> --round 15 --threads 0 --mode exhaustive --output result.json
+python tools/solve_client.py --input puzzle.json --threads 2 --mode rank --seconds 120
+```
+
+客户端会显示仙命与策略名称、详细效果、实际线程数、遍历进度和最终摆牌名称，Ctrl+C 发送取消请求。
+
+## 编号名称与详细效果
+
+编号需要带类型，避免同号不同义：`talent` 仙命、`fate` 天衍策略、`xianmo` 百家策略、`keyin` 刻印、`resonance` 共鸣、`buff` 状态、`card` 卡牌、`character` 角色。
+
+例如 `GET /catalog/talent/10005` 返回“善假于物”，效果为“抽2张副职牌”。`GET /catalog?kind=xianmo&q=追击&limit=20` 可按名称或效果搜索百家策略。名称与描述来自当前本地游戏配置及本地化，配置参数已代入；原描述保留在 `descriptionTemplate`。
+
+未知编号返回 `known=false`（单项查询 HTTP 404）。游戏没有提供名称或描述的内部项分别标记 `nameAvailable=false`、`descriptionAvailable=false`；需要局面参数但未能静态代入时列在 `unresolvedFields`，不会猜测效果。
+
+`/replays/{code}` 保留所有数字字段，同时为每一方增加 `details`，包含仙命、天衍、百家、刻印、共鸣、角色和常驻状态的名称与效果。百家开关参数从该轮私有快照读取；未采到的参数保留为空，不按名称猜测开关。
 
 `{id}` 是 `/ladder` 或 `/stats` 返回的 20 位十六进制匿名玩家 ID。同一玩家跨接口使用同一 ID，查询时无需原始 UID。`{code}` 是游戏分享的复盘码；战绩返回的 `replayCode` 非空时也可直接使用。
 
@@ -121,8 +167,8 @@ for player in stats['players']:
 
 ## HTTP 状态与范围
 
-`200` 成功，`400` 参数错误，`403` 浏览器 Origin 未允许，`404` 接口或赛季快照不存在，`429` 请求过快，`503` 取数服务暂时不可用。错误正文为 `{"error":"说明"}`。现有服务不保证返回 `Retry-After`，调用方应自行等待并有限重试。
+`200` 成功，`202` 求解已提交，`400` 参数错误，`403` 浏览器 Origin 未允许，`404` 接口、编号、任务或赛季快照不存在，`409` 求解繁忙，`413` 盘面正文过大，`429` 请求过快，`503` 服务暂时不可用。错误正文为 `{"error":"说明"}`。现有服务不保证返回 `Retry-After`，调用方应自行等待并有限重试。
 
 当前可从 Python、curl、PowerShell 或服务端直接调用。浏览器跨域调用仍受既有 Origin 白名单限制。匿名玩家 ID 只能关联已采集样本；未采到的数据不代表零场。复盘是否能取回取决于游戏服务保存期限。
 
-原网站的摆牌求解运行在浏览器 Web Worker 中，当前没有服务器求解接口。`/replays/{code}` 返回局面数据，不执行摆牌搜索。仓库中的浏览器求解代码保留，后台采集和分析接口独立运行。
+`/replays/{code}` 只负责导入局面；摆牌搜索通过 `/solve` 异步执行。仓库保留原浏览器实验源码，线上仍不发布该网站。

@@ -17,12 +17,7 @@ namespace Yx.BattleSim.Effects;
 /// 于是真实对局是「R 从 1 血开始，L 攒够 8 灵气后打出本卡（伤害 = R 的 maxHp = 100）→ R = 1-100 = -99」，
 /// 而 sim 少了开局这一下，R 从 100 起手 → 只算出 0，两侧全错。
 ///
-/// ⬜ 未移植（都需要本层没有的设施，见覆盖账）：
-///   · 11000018 / 369 的 **<c>LevelDown()</c>** 分支（要稀有度变体表；对方牌 rarity ≥ 1 时降一档）；
-///   · 389 的 <c>AddXingWei(前/后格)</c> + 给空格填卡 4000038（要**星位**与格位改写）；
-///   · 369 不可降级时的 <c>AddMengEJieSkipPos</c>（属"出牌前跳过链"，整条未做）；
-///   · 头部 <c>if (rarity &gt; rarityCap) num = cardBaseId + 10000 * rarityCap;</c> 的稀有度截断
-///     （只影响 `cardConfigDict[num]` 取哪一档，otherParams 不随稀有度变，对本层无差）。
+/// 降级、星位与梦厄劫的一次跳过标记均按当前格位结算。
 /// </summary>
 internal static class CardOpeningFunctions
 {
@@ -220,9 +215,14 @@ internal static class CardOpeningFunctions
                 break;
             }
 
-            // ⬜ 369 梦•厄劫缠身：同型，但「不可降级」那一支走的是 `AddMengEJieSkipPos(triggerGrid)`
-            //   （把这一格加入**跳过表**，出牌循环到它时跳过一次）—— sim 还没有「跳过指定格」的机制，
-            //   而 `BattleDeck.Item.Skip` 是**整场出局**语义，两者不同，不能拿来顶替。
+            // 梦·厄劫缠身：降级对方同格牌；不能降级时只跳过该格下一次使用。
+            case 369:
+                if (triggerGrid >= foe.Board.Count) break;
+                BattleCard dreamTarget = foe.Board[triggerGrid];
+                if (dreamTarget.Id != 19 && foe.Config.CardRarity(dreamTarget.Id) >= 1)
+                    foe.ReplaceCard(triggerGrid, foe.Config.BuildCard(dreamTarget.Id - 10000));
+                else GridMarkFunctions.AddMengEJieSkipPos(foe, triggerGrid);
+                break;
 
             // 389 星弈•治孤：[开局] **相邻两格成为星位**；**空格则放入「星弈•飞」**（按本卡稀有度）。
             // 原码 TriggerOpening 的 case 389（12585）：
@@ -263,6 +263,21 @@ internal static class CardOpeningFunctions
                 if (self.Config.CardLevel(card.Id) >= LevelYuanYing)
                     self.ModifyBuffValue(BuffType.YunHai, p.At(1));
                 break;
+
+            // ── 09-29 新卡 ──
+            // 446：对方挂 o[0] 层虚弱。
+            case 446:
+                foe.ModifyBuffValue(BuffType.XuRuo, p.At(0));
+                break;
+            // 447：按「触发格」前后两格的牌名激活五行（空格按普通攻击，牌名不含五行则什么都不激活）。
+            case 447:
+                WuXingFunctions.ActiveWuXingInName(self, GridFunctions.CardNameAt(self, GridFunctions.GetPreviousGrid(self, triggerGrid)));
+                WuXingFunctions.ActiveWuXingInName(self, GridFunctions.CardNameAt(self, GridFunctions.GetNextGrid(self, triggerGrid)));
+                break;
+            // 1000101：灵气为 0 时加 o[0] 灵气（judge 模式也算有[开局]）。
+            case 1000101:
+                if (self.Anima == 0) self.ModifyAnima(p.At(0));
+                break;
         }
     }
 
@@ -281,6 +296,7 @@ internal static class CardOpeningFunctions
             case 11000001: case 11000005: case 11000009: case 11000013: case 11000014:
             case 11000018: case 11000022: case 11000023: case 11000024:
             case 203: case 181: case 315: case 7000079: case 369: case 372: case 389:
+            case 446: case 447: case 1000101:   // 09-29 新卡
                 return true;
             case 1000086:
                 return self.Config.CardLevel(id) >= LevelYuanYing;

@@ -36,6 +36,9 @@ public static class TurnTickFunctions
         //       → 1a4c 风雪之树 + 内伤取值 → 1bd1 内伤结算 + 共鸣83 → 1d08 噬虚灵手 → （switch 外）N 回合后生效 + 刻印。
         //   （核对工具：scratchpad 的 chain_walk.py 沿「段尾顶层 goto」走一遍即得此序。）
 
+        // 10-08 新增：OnTurnStarted 第一句给「自身回合」标记（OnTurnEnded 最后一句清掉），夜毒之印只在自己回合内触发。
+        c.ModifyBuffValue(BuffType.ZiShenHuiHe, 1);
+
         // ── IL_0105 ──
         if (c.HasBuff(BuffType.XiaHuiHeKaiShiQianBuZaiSunShiShengMing))
             c.ModifyBuffValue(BuffType.XiaHuiHeKaiShiQianBuZaiSunShiShengMing, -1);
@@ -85,6 +88,7 @@ public static class TurnTickFunctions
         Dec(c, BuffType.WanShiRuYi);
         Dec(c, BuffType.ShunYing);
         Dec(c, BuffType.NiShi);
+        Dec(c, BuffType.LingYuanWaiFang);   // 09-29 新增，与逆势同批
         Dec(c, BuffType.TieGu);
         Dec(c, BuffType.QianDun);
         Dec(c, BuffType.ChaiZhao);
@@ -265,6 +269,7 @@ public static class TurnTickFunctions
         }
         // ── IL_1863 回合开始加防 / IL_18fb 回合开始加云海（封顶）/ IL_19b9 万物生长 ──
         if (c.HasBuff(BuffType.HuiHeKaiSHiJiaFang)) c.ModifyDef(c.GetBuffValue(BuffType.HuiHeKaiSHiJiaFang));
+        if (c.HasXianMoStrategy(3012)) c.ModifyDef(XianMoStrategyFunctions.P(c, 3012));
         if (c.HasBuff(BuffType.HuiHeKaiSHiJiaYunHai)
             && c.GetBuffValue(BuffType.YunHai) < c.Config.CardOtherParams(1040083).At(2))
             c.ModifyBuffValue(BuffType.YunHai, c.GetBuffValue(BuffType.HuiHeKaiSHiJiaYunHai));
@@ -329,6 +334,12 @@ public static class TurnTickFunctions
             c.ModifyBuffValue(BuffType.JiangJiInRoundXJiShu, -1);
             if (c.GetBuffValue(BuffType.JiangJiInRoundXJiShu) == 0)
                 foe.ModifyBuffValue(BuffType.XiaCiPaiJiangJi, 1);
+        }
+        // 混沌潜影（09-29 新增）：回合计数归零时获得一层混沌潜影。
+        if (c.HasBuff(BuffType.HunDunQianYingHuiHeJiShu))
+        {
+            c.ModifyBuffValue(BuffType.HunDunQianYingHuiHeJiShu, -1);
+            if (c.GetBuffValue(BuffType.HunDunQianYingHuiHeJiShu) == 0) c.ModifyBuffValue(BuffType.HunDunQianYing, 1);
         }
 
         // 刻印 138：回合开始补机关刻文。
@@ -438,6 +449,8 @@ public static class TurnTickFunctions
         // ── IL_0760 共鸣3 / IL_0882 仙命84：本回合未攻击 → 加剑意 ──
         if (c.Subs.IsTalentResonanceEffective(c, 3) && c.GetBuffValue(BuffType.BENLUNGONGJICISHU) == 0)
             c.ModifyBuffValue(BuffType.JianYi, c.Config.ResonanceOtherParams(3).At(0));
+        if (c.HasXianMoStrategy(7002) && c.GetBuffValue(BuffType.BENLUNGONGJICISHU) == 0)
+            c.ModifyBuffValue(BuffType.JianYi, XianMoStrategyFunctions.P(c, 7002));
         if (c.HasFateStrategy(84) && c.GetBuffValue(BuffType.BENLUNGONGJICISHU) == 0)
             c.ModifyBuffValue(BuffType.JianYi, c.Config.FateOtherParams(84).At(0));
         // ── IL_09a7 共鸣63：有防则再加防 ──
@@ -551,7 +564,7 @@ public static class TurnTickFunctions
             for (int t = 0; t < shuiShiTimes; t++)
             {
                 int shuiShi = c.GetBuffValue(BuffType.ShuiShi);
-                if (c.Subs.HasKeYinType(c, 101) || c.HasFateStrategy(137))
+                if (c.Subs.HasKeYinType(c, 101) || c.HasFateStrategy(137) || c.HasXianMoStrategy(7032))
                 {
                     c.ModifyBuffValue(BuffType.AfterCardAciton, 1);
                     c.ModifyBuffValue(BuffType.KeYinShuiRen, 1);
@@ -566,8 +579,14 @@ public static class TurnTickFunctions
                 }
             }
             // 水势 + 土灵阵Plus：加防 = min(水势层数, 土灵阵Plus层数)。
+            // 09-29：有「幻土灵阵·溢出上限」时不再按土灵阵Plus 封顶。
             if (c.HasBuff(BuffType.TuLingZhenPlus))
-                c.ModifyDef(Math.Min(c.GetBuffValue(BuffType.ShuiShi), c.GetBuffValue(BuffType.TuLingZhenPlus)));
+            {
+                int shui = c.GetBuffValue(BuffType.ShuiShi);
+                if (!c.HasBuff(BuffType.HuanTuLingZhenYiChuShangXian))
+                    shui = Math.Min(shui, c.GetBuffValue(BuffType.TuLingZhenPlus));
+                c.ModifyDef(shui);
+            }
         }
         // ── IL_1d27 临时水势 / 灵气回收（水势结算**之后**；早先排在最前，临时加倍的水势就没参与结算）──
         if (c.HasBuff(BuffType.JiLuLinShiShuiShi))
@@ -585,6 +604,14 @@ public static class TurnTickFunctions
             if (spiderDmg > 0)
                 CombatMath.ApplyDamage(c, foe,
                     DamageInfo.Create(c, DamageType.Damage, spiderDmg, skipWoundCheck: true));
+        }
+        // 卡 441（09-29 新增）：牌库里有它时，回合末按「防御 ÷ 441.o[0]」打对手。
+        if (c.Subs.HasCardInDeck(c, 441))
+        {
+            int per = c.Config.CardOtherParams(441).At(0);
+            int dmg441 = per > 0 ? c.Def / per : 0;
+            if (dmg441 > 0)
+                CombatMath.ApplyDamage(c, foe, DamageInfo.Create(c, DamageType.Damage, dmg441, skipWoundCheck: true));
         }
         // ── IL_1ecd 散微幻：避邪 += 层数（独立的一条，不受天赋66 门控）──
         if (c.HasBuff(BuffType.SanWeiHuan))
@@ -676,5 +703,6 @@ public static class TurnTickFunctions
         c.RemoveBuff(BuffType.SiZhanBuDao);
         Dec(c, BuffType.MengBuDongJinGangZhen);
         Dec(c, BuffType.GongJiShiShiJiaNeiShangHuiHeShu);
+        c.RemoveBuff(BuffType.ZiShenHuiHe);   // 10-08：OnTurnEnded 最后一句
     }
 }

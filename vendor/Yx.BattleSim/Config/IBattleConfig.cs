@@ -14,6 +14,9 @@ public interface IBattleConfig
     IReadOnlyList<int> CardOtherParams(int cardId);
     IReadOnlyList<int> TalentOtherParams(int talentId);
     IReadOnlyList<int> FateOtherParams(int fateId);
+    IReadOnlyList<int> XianMoOtherParams(int strategyId) => Array.Empty<int>();
+    int XianMoEffectRound(int strategyId) => 0;
+    bool CardHidden(int cardId) => false;
     IReadOnlyList<int> ResonanceOtherParams(int resonanceTalentId);
     IReadOnlyList<int> KeYinOtherParams(int keYinCardId);
     /// <summary>刻印牌描述（判「[被动生效]」）。默认空串 = 非被动。</summary>
@@ -155,6 +158,7 @@ public sealed class StubBattleConfig : IBattleConfig
     private readonly Dictionary<int, int> _levelHp = new();
     private readonly Dictionary<int, int[]> _talent = new();
     private readonly Dictionary<int, int[]> _fate = new();
+    private readonly Dictionary<int, int[]> _xianmo = new();
     private readonly Dictionary<int, int[]> _resonance = new();
     private readonly Dictionary<int, int[]> _keyin = new();
     private readonly Dictionary<int, BuffCategory> _buffCat = new();
@@ -166,6 +170,7 @@ public sealed class StubBattleConfig : IBattleConfig
     public StubBattleConfig CardNamed(int id, string name) { _cardName[id] = name; return this; }
     public StubBattleConfig Talent(int id, params int[] otherParams) { _talent[id] = otherParams; return this; }
     public StubBattleConfig Fate(int id, params int[] otherParams) { _fate[id] = otherParams; return this; }
+    public StubBattleConfig XianMo(int id, params int[] otherParams) { _xianmo[id] = otherParams; return this; }
     public StubBattleConfig Resonance(int id, params int[] otherParams) { _resonance[id] = otherParams; return this; }
     public StubBattleConfig KeYin(int id, params int[] otherParams) { _keyin[id] = otherParams; return this; }
     /// <summary>刻印牌的描述（判「[被动生效]」）与开局生命修正 maxHp。</summary>
@@ -176,6 +181,7 @@ public sealed class StubBattleConfig : IBattleConfig
     public IReadOnlyList<int> CardOtherParams(int cardId) => Get(_card, cardId);
     public IReadOnlyList<int> TalentOtherParams(int talentId) => Get(_talent, talentId);
     public IReadOnlyList<int> FateOtherParams(int fateId) => Get(_fate, fateId);
+    public IReadOnlyList<int> XianMoOtherParams(int strategyId) => Get(_xianmo, strategyId);
     public IReadOnlyList<int> ResonanceOtherParams(int resonanceTalentId) => Get(_resonance, resonanceTalentId);
     public IReadOnlyList<int> KeYinOtherParams(int keYinCardId) => Get(_keyin, keYinCardId);
     public string CardName(int cardId) => _cardName.TryGetValue(cardId, out var v) ? v : "";

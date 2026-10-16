@@ -48,6 +48,8 @@ public sealed class JsonBattleConfig : IBattleConfig
     /// <summary>刻印牌的刻印点数（keyin_meta.ky）。</summary>
     private Dictionary<int, int> _keyinPts = new();
     private readonly Dictionary<int, int[]> _fate;
+    private Dictionary<int, int[]> _xianmo = new();
+    private Dictionary<int, int> _xianmoRound = new();
     private readonly Dictionary<int, int[]> _talent;
     private readonly Dictionary<int, int[]> _resonance;
     private readonly Dictionary<int, int> _level;
@@ -72,6 +74,9 @@ public sealed class JsonBattleConfig : IBattleConfig
     public int KeYinMaxHp(int keYinCardId) => _keyinHp.TryGetValue(keYinCardId, out var v) ? v : 0;
     public int KeYinPoints(int keYinCardId) => _keyinPts.TryGetValue(keYinCardId, out var v) ? v : 0;
     public IReadOnlyList<int> FateOtherParams(int fateId) => _fate.TryGetValue(fateId, out var v) ? v : Empty;
+    public IReadOnlyList<int> XianMoOtherParams(int strategyId) => _xianmo.TryGetValue(strategyId, out var v) ? v : Empty;
+    public int XianMoEffectRound(int strategyId) => _xianmoRound.GetValueOrDefault(strategyId);
+    public bool CardHidden(int cardId) => Card(cardId)?.Hidden ?? false;
     public IReadOnlyList<int> TalentOtherParams(int talentId) => _talent.TryGetValue(talentId, out var v) ? v : Empty;
     public IReadOnlyList<int> ResonanceOtherParams(int resonanceTalentId) => _resonance.TryGetValue(resonanceTalentId, out var v) ? v : Empty;
     public string CardName(int cardId) => _card.TryGetValue(cardId, out var m) ? m.Name : "";
@@ -206,6 +211,10 @@ public sealed class JsonBattleConfig : IBattleConfig
                 if (kv.Value.TryGetProperty("hp", out var hp) && hp.TryGetInt32(out int hv) && hv != 0) cfg._keyinHp[kid] = hv;
                 if (kv.Value.TryGetProperty("ky", out var ky) && ky.TryGetInt32(out int kyv) && kyv != 0) cfg._keyinPts[kid] = kyv;
             }
+        cfg._xianmo = LoadArrays(root, "xianmo");
+        if (root.TryGetProperty("xianmo_meta", out var xm))
+            foreach (var kv in xm.EnumerateObject())
+                cfg._xianmoRound[int.Parse(kv.Name)] = GetInt(kv.Value, "round");
         return cfg;
     }
 

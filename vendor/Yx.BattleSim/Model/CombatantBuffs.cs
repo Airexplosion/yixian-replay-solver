@@ -117,7 +117,7 @@ public sealed partial class Combatant
         }
 
         // 仙命148：加攻 -1，转成 1 层木刺。
-        if (delta > 0 && buffType == BuffType.JiaGong && HasFateStrategy(148))
+        if (delta > 0 && buffType == BuffType.JiaGong && (HasFateStrategy(148) || HasXianMoStrategy(7035)))
         {
             delta--;
             ModifyBuffValue(BuffType.MuCi, 1);
@@ -177,6 +177,12 @@ public sealed partial class Combatant
         }
         if (delta > 0 && buffType == BuffType.XingLi && HasFateStrategy(399)
             && FateStrategyFunctions.IsSwitchActive(this, 399))
+        {
+            Opponent.ModifyBuffValue(BuffType.NeiShang, delta);
+            return;
+        }
+
+        if (delta > 0 && buffType == BuffType.XingLi && HasXianMoStrategy(23069) && XianMoSwitchActive(23069))
         {
             Opponent.ModifyBuffValue(BuffType.NeiShang, delta);
             return;
@@ -297,7 +303,7 @@ public sealed partial class Combatant
         if (buffType == BuffType.Min)
         {
             int n = Math.Abs(delta) * 3;
-            ModifyHp(CharacterId == 4000003 ? n : -n);
+            ModifyHp(CharacterId == 4000003 || HasXianMoStrategy(27021) ? n : -n);
         }
 
         // 无迷踪：宗字 buff 的获得量按层数回血。
@@ -372,6 +378,7 @@ public sealed partial class Combatant
 
         // 给对手挂虚化时，仙命405 让对手加灵气。
         if (delta > 0 && buffType == BuffType.XuRuo && Opponent.HasFateStrategy(405)) Opponent.ModifyAnima(1);
+        if (delta > 0 && buffType == BuffType.XuRuo && Opponent.HasXianMoStrategy(7080)) Opponent.ModifyAnima(1);
 
         // 气势（天赋209 + 拳家式）：一次性转 2 身法。
         if (delta > 0 && buffType == BuffType.QiShi && HasTalent(209) && HasBuff(BuffType.QuanJiaShi)
@@ -457,6 +464,11 @@ public sealed partial class Combatant
                 ModifyBuffValue(BuffType.WuXingJuLingYiChuFa, 1);
                 ModifyAnima(1);
             }
+            if (HasXianMoStrategy(7048) && GetBuffValue(buffType) > 1 && !HasBuff(BuffType.WuXingJuLingYiChuFa))
+            {
+                ModifyBuffValue(BuffType.WuXingJuLingYiChuFa, 1);
+                ModifyAnima(1);
+            }
             // 刻印31：已有该灵 >1 层时补一次打伤。
             if (Subs.HasKeYinType(this, 31) && GetBuffValue(buffType) > 1)
                 CombatMath.ApplyDamage(this, Opponent,
@@ -483,6 +495,11 @@ public sealed partial class Combatant
                     case BuffType.JiHuoShuiLing: ModifyBuffValue(BuffType.JiHuoTuLing, 1); break;
                     case BuffType.JiHuoTuLing: ModifyDef(Config.FateOtherParams(411).At(0)); break;
                 }
+            }
+            if (HasXianMoStrategy(7084))
+            {
+                if (buffType == BuffType.JiHuoShuiLing) ModifyBuffValue(BuffType.JiHuoTuLing, 1);
+                if (buffType == BuffType.JiHuoTuLing) ModifyDef(Config.XianMoOtherParams(7084).At(0));
             }
         }
 

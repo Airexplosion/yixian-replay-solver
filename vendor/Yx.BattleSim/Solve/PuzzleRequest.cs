@@ -16,8 +16,17 @@ public sealed class PuzzleRequest
     /// <summary>我方牌桌格数。</summary>
     public int Slots { get; set; } = 8;
 
-    /// <summary>先手：<c>"me"</c> / <c>"foe"</c> / <c>"both"</c>（两种都算，默认）。</summary>
+    /// <summary>先手："me" / "foe" / "both"（默认）；"auto" 按每套摆法的实际速度判定，同速双算。</summary>
     public string First { get; set; } = "both";
+
+    /// <summary>When both orders are requested, prefer the order implied by current speed without filtering either.</summary>
+    public bool WeightByCurrentInitiative { get; set; }
+
+    /// <summary>record preserves a historical result; auto/tie/off recompute initiative-derived death fight for edited puzzles.</summary>
+    public string DeathFightMode { get; set; } = "record";
+
+    /// <summary>Current initiative's percentage in ranking (1–99). Default 50 keeps the original equal weighting.</summary>
+    public int CurrentOrderWeightPercent { get; set; } = 50;
 
     public PuzzleSide Me { get; set; } = new();
 
@@ -65,6 +74,12 @@ public sealed class PuzzleRequest
     /// <summary>推荐结果合并当前全部先后手 / 对手 / 抽样中战斗行为相同的未用牌变体。</summary>
     public bool DeduplicateResults { get; set; }
 
+    /// <summary>Keep the combined ranking, and append a winning order-specific alternative when that order has no win in the top list.</summary>
+    public bool ShowOrderAlternatives { get; set; }
+
+    /// <summary>rank: bounded recommendations; existence: stop at a win; exhaustive: rank every legal arrangement until completion or cancellation.</summary>
+    public string SearchMode { get; set; } = "rank";
+
     /// <summary>总时间上限（毫秒）。到点返回当前最好结果。</summary>
     public int TimeLimitMs { get; set; } = 8000;
 
@@ -100,6 +115,8 @@ public sealed class PuzzleSide : OracleSide
     {
         var cards = new BattleCard[board.Count];
         for (int i = 0; i < board.Count; i++) cards[i] = cfg.BuildCard(board[i]);
-        return ToSide(uid) with { Board = cards };
+        // Only unlocked slots take part in the card cycle. Preserve deliberate
+        // empty slots inside this board, without adding the default eight slots.
+        return ToSide(uid) with { Board = cards, UnlockGrids = board.Count };
     }
 }

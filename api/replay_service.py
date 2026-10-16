@@ -2,6 +2,8 @@
 import argparse, collections, contextlib, datetime as dt, hashlib, json, os, pathlib, re, ssl, sys, threading, time
 import rank_stats
 import ladder_history
+import metadata_catalog
+import solver_jobs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -32,6 +34,8 @@ def gameplay_side(player, pool=False):
     hand=list(snap.get('handCards') or [])
     slots=int(snap.get('unlockGrids') or 0)
     if slots not in range(1,9) or len(board)>8: raise ValueError('复盘牌位数据不完整')
+    if len(board)>slots:raise ValueError('复盘牌桌超过已解锁格数')
+    board.extend([0]*(slots-len(board)))
     def params(data):
         return {k:list(v.get('commonParams') or []) for k,v in (data or {}).items() if isinstance(v,dict)}
     resonance=((snap.get('talentResonanceData') or {}).get('selectionData') or {}).get('selected') or 0
@@ -41,6 +45,7 @@ def gameplay_side(player, pool=False):
         'characterId':public.get('characterId') or 0,'sect':public.get('sect') or 0,'career':public.get('career') or 0,
         'talents':list(snap.get('talents') or []),'keyin':list(snap.get('usedKeYinCards') or []),
         'fate':list(snap.get('fateStrategies') or []),'xianMoStrategies':list(snap.get('xianMoStrategies') or []),
+        'xianMoTempDatas':dict((private.get('xianMoData') or {}).get('tempDatas') or {}),
         'resonance':resonance,'permanentBuffs':dict(snap.get('permanentBuffTempDatas') or {}),
         'talentTempDatas':dict(snap.get('talentTempDatas') or {}),'resonanceFlags':dict(public.get('resonanceTalentFlags') or {}),
         'talentDatas':params(snap.get('talentDatas')),'privateTalentDatas':params(snap.get('privateTalentDatas')),
@@ -127,7 +132,8 @@ def replay(code):
         if saved and time.monotonic()-saved[0]<600:
             CACHE.move_to_end(plain); return saved[1]
     data=upstream('/gameStat/fetchPlayerBattleInfo',{'code':plain})
-    result=normalize_replay(data,selected)
+    if data.get('version')!='001.0008.0002':raise ValueError('当前求解器仅支持战绩版本 001.0008.0002')
+    result=metadata_catalog.decorate_replay(normalize_replay(data,selected))
     try: rank_stats.record_replay(STORE,data,lookup_rank=int(plain,36)%10)
     except (ValueError,OSError): pass
     data=None
@@ -158,7 +164,14 @@ def api_index():
                 {'method':'GET','path':'/api/v1/players/{id}/matches','description':'匿名玩家标识对应的逐场战绩'},
                 {'method':'GET','path':'/api/v1/replays/{code}','description':'复盘盘面与开战状态'}],
             'documentation':'https://github.com/Airexplosion/yixian-replay-solver/blob/main/API.md',
-            'solver':{'available':False,'description':'原摆牌求解运行在浏览器中，当前 API 返回数据和统计分析'}}
+            'solver':{'available':True,'description':'百家之道多核求解，支持完整遍历、找赢法与限时推荐'},
+            'solverEndpoints':[
+                {'method':'GET','path':'/api/v1/solver','description':'求解版本、可用核心数与搜索模式'},
+                {'method':'POST','path':'/api/v1/solve','description':'提交盘面，返回异步任务'},
+                {'method':'GET','path':'/api/v1/solve/{job}','description':'进度、当前最优摆法与终态，可重复查询'},
+                {'method':'DELETE','path':'/api/v1/solve/{job}','description':'取消任务'},
+                {'method':'GET','path':'/api/v1/catalog','description':'编号分类、名称和效果搜索'},
+                {'method':'GET','path':'/api/v1/catalog/{kind}/{id}','description':'指定编号的名称与详细效果'}]}
 
 def collect_ladder():
     sys.path.insert(0,str(ROOT));from collector import config
@@ -206,20 +219,56 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         if self.origin() not in ORIGINS: return self.send(403,{'error':'来源未允许'})
         self.send_response(204);self.send_header('Access-Control-Allow-Origin',self.origin())
-        self.send_header('Access-Control-Allow-Methods','GET, OPTIONS');self.send_header('Vary','Origin');self.end_headers()
-    def do_GET(self):
-        if self.origin() and self.origin() not in ORIGINS: return self.send(403,{'error':'来源未允许'})
+        self.send_header('Access-Control-Allow-Methods','GET, POST, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers','Content-Type');self.send_header('Vary','Origin');self.end_headers()
+    def authorize(self):
+        if self.origin() and self.origin() not in ORIGINS:
+            self.send(403,{'error':'来源未允许'});return False
         ip=self.client_address[0]
         with RATE_LOCK:
             now=time.monotonic()
-            if now-RATE.get(ip,0)<1: return self.send(429,{'error':'请求太快，请稍后重试'})
+            if now-RATE.get(ip,0)<1:
+                self.send(429,{'error':'请求太快，请稍后重试'});return False
             if len(RATE)>4096: RATE.clear()
             RATE[ip]=now
+        return True
+    def do_POST(self):
+        if not self.authorize():return
+        if urlsplit(self.path).path!='/api/v1/solve':return self.send(404,{'error':'接口不存在'})
+        try:
+            length=int(self.headers.get('Content-Length','0'))
+            if length<=0 or length>262144:return self.send(413,{'error':'盘面 JSON 须为 1–262144 字节'})
+            request=json.loads(self.rfile.read(length).decode('utf-8'))
+            return self.send(202,solver_jobs.JOBS.start(request))
+        except UnicodeDecodeError:self.send(400,{'error':'盘面 JSON 须使用 UTF-8 编码'})
+        except ValueError as error:self.send(400,{'error':str(error)})
+        except solver_jobs.BusyError as error:self.send(409,{'error':str(error)})
+        except Exception:self.send(503,{'error':'求解服务暂时不可用'})
+    def do_DELETE(self):
+        if not self.authorize():return
+        match=re.fullmatch(r'/api/v1/solve/([A-Za-z0-9_-]{32})',urlsplit(self.path).path)
+        if not match:return self.send(404,{'error':'求解任务不存在'})
+        try:self.send(200,solver_jobs.JOBS.get(match[1]).cancel())
+        except KeyError:self.send(404,{'error':'求解任务不存在或已过期'})
+        except Exception:self.send(503,{'error':'取消任务失败，请查询任务状态后重试'})
+    def do_GET(self):
+        if not self.authorize():return
         url=urlsplit(self.path)
         try:
             if url.path in ('/api/v1','/api/v1/'): return self.send(200,api_index())
             if url.path=='/api/v1/health': return self.send(200,{'ok':True,'service':'yx-replay','sim':'browser','mode':'api-only'})
             if url.path=='/api/v1/collection': return self.send(200,collection_status())
+            if url.path=='/api/v1/solver':return self.send(200,solver_jobs.JOBS.capabilities())
+            if url.path=='/api/v1/catalog':return self.send(200,metadata_catalog.query(parse_qs(url.query)))
+            catalog_match=re.fullmatch(r'/api/v1/catalog/([a-z]+)/(-?\d+)',url.path)
+            if catalog_match:
+                item=metadata_catalog.lookup(catalog_match[1],int(catalog_match[2]))
+                return self.send(200 if item['known'] else 404,item)
+            job_match=re.fullmatch(r'/api/v1/solve/([A-Za-z0-9_-]{32})',url.path)
+            if job_match:
+                try:job=solver_jobs.JOBS.get(job_match[1])
+                except KeyError:return self.send(404,{'error':'求解任务不存在或已过期'})
+                return self.send(200,solver_jobs.decorate_report(job.snapshot()))
             match=re.fullmatch(r'/api/v1/replays/([a-zA-Z0-9]{5,14})',url.path)
             if match: return self.send(200,replay(match[1]))
             if url.path=='/api/v1/stats':

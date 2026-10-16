@@ -42,7 +42,7 @@ public static class WuXingFunctions
     public static bool CheckWuXing(Combatant src, BuffType jihuoWuXing)
     {
         if (src.HasBuff(jihuoWuXing)) return true;
-        if (src.HasBuff(BuffType.LongMaJingShen)) return true;
+        if (src.HasBuff(BuffType.LongMaJingShen) || src.HasXianMoStrategy(11003) || src.HasTalent(275) || src.HasTalent(278)) return true;
         if (src.HasBuff(BuffType.UsedWuXing))
         {
             var used = (BuffType)src.GetBuffValue(BuffType.UsedWuXing);
@@ -115,6 +115,21 @@ public static class WuXingFunctions
         return false;
     }
 
+    /// <summary>
+    /// 09-29 新增 IsCunZaiWuXingKeZhi(wuxing, cardName)：牌名是五行牌，且 wuxing（已激活的某一灵）
+    /// 与牌名的五行之间「存在克制」——两个方向都算（金↔木 / 金↔火，木↔土 / 木↔金 …）。
+    /// </summary>
+    public static bool IsCunZaiWuXingKeZhi(BuffType wuxing, string cardName)
+    {
+        if (!(cardName.Contains("金灵") || cardName.Contains("木灵") || cardName.Contains("土灵")
+              || cardName.Contains("水灵") || cardName.Contains("火灵"))) return false;
+        return (wuxing == BuffType.JiHuoJinLing && (cardName.Contains("木灵") || cardName.Contains("火灵")))
+            || (wuxing == BuffType.JiHuoMuLing && (cardName.Contains("土灵") || cardName.Contains("金灵")))
+            || (wuxing == BuffType.JiHuoTuLing && (cardName.Contains("水灵") || cardName.Contains("木灵")))
+            || (wuxing == BuffType.JiHuoShuiLing && (cardName.Contains("火灵") || cardName.Contains("土灵")))
+            || (wuxing == BuffType.JiHuoHuoLing && (cardName.Contains("金灵") || cardName.Contains("水灵")));
+    }
+
     /// <summary>IsKeZhi(a, b)：a 的元素克 b 的元素。</summary>
     public static bool IsKeZhi(string a, string b)
         => (a.Contains("金灵") && b.Contains("木灵")) || (a.Contains("木灵") && b.Contains("土灵"))
@@ -166,7 +181,7 @@ public static class WuXingFunctions
     /// 仙命 417：私有天赋数据 199（五行玉屏选的牌）也按牌名计入种类。
     ///   ⚠ 原码 `privateData.talentDatas[199]` 是字典下标，没有这条数据时会抛异常（真实对局里 417 与 199 成对出现）；sim 按空表。
     /// </summary>
-    public static int GetWuXingCountInDeck(Combatant src)
+    public static int GetWuXingCountInDeck(Combatant src, bool checkTalent278 = false)
     {
         var seen = new List<string>();
         bool has292 = false;
@@ -187,17 +202,17 @@ public static class WuXingFunctions
             foreach (var (n, _) in NameMap)
                 if (name.Contains(n) && !seen.Contains(n)) seen.Add(n);
         }
-        if (src.HasFateStrategy(417) && src.PrivateTalentDatas.TryGetValue(199, out var yp))
+        if ((src.HasFateStrategy(417) || src.HasXianMoStrategy(7085)) && src.PrivateTalentDatas.TryGetValue(199, out var yp))
             foreach (int id in yp)
             {
                 string name2 = src.Config.CardName(id);
                 foreach (var (n, _) in NameMap)
                     if (name2.Contains(n) && !seen.Contains(n)) seen.Add(n);
             }
-        int count = seen.Count + add7000101;
+        int count = (src.HasTalent(278) ? 5 : seen.Count) + add7000101;
         if (src.Subs.HasKeYinType(src, 76)) count += src.Subs.KeYinOtherparam(src, 76, 0);
         if (has292 && min292 > 0) count += min292;
         if (src.HasFateStrategy(147) && seen.Contains("火灵")) count++;
-        return count;
+        return src.HasTalent(278) && checkTalent278 ? 1 : count;
     }
 }

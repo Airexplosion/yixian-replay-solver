@@ -58,6 +58,10 @@ public static class CardTypes
         if (b == 261 || (c.HasBuff(BuffType.WanNengJian)
                          && c.GetBuffValue(BuffType.WanNengJianShengXiaoCengJi) <= c.GetBuffValue(BuffType.WanNengJian))) return true;
         if (c.IsLingWuCard(cardId)) return true;   // 天赋 192 + 灵悟牌（talentDatas[189]，原码 13599 / 13674 / 13738 / 13766）
+        // 原码 IsYunJian 末两条（10-08 审计补上，早先漏搬）：共鸣 109 在卡 15 打出后置的临时标记；
+        // 刻印 25 打出 1000001 / 1000027 后给的「所有牌视作云剑」（KeYinHookFunctions 一直在加，但这里没读）。
+        if (c.IsTalentResonanceEffective(109) && c.CheckTalentResonanceTempFlag(109)) return true;
+        if (c.HasBuff(BuffType.SuoYouPaiShiZuoYunJian)) return true;
         return false;
     }
 
@@ -68,9 +72,10 @@ public static class CardTypes
         if (c.HasBuff(BuffType.KuangLongTunYun) && (n.Contains("云剑") || c.HasBuff(BuffType.XiaZhangPaiSuanZuoYunJian))) return true;
         int b = BaseId(cardId);
         if (b == 213 || b == 331 || b == 401 || b == 261) return true;
-        if (c.Config.CardCareer(cardId) == CareerQinShi && c.HasFateStrategy(319)) return true;
+        if (c.Config.CardCareer(cardId) == CareerQinShi && (c.HasFateStrategy(319) || c.HasXianMoStrategy(7049))) return true;
         if (c.HasFateStrategy(322) && n.Contains("猫")) return true;
-        if (c.HasFateStrategy(381) && c.Config.CardDesc(cardId).Contains("[击伤]")) return true;
+        if ((c.HasFateStrategy(381) || c.HasXianMoStrategy(7068)) && c.Config.CardDesc(cardId).Contains("[击伤]")) return true;
+        // 10-15: every level-two-or-higher card qualifies, including non-swords.
         if (c.Config.CardRarity(cardId) >= 1 && c.GetBuffValue(BuffType.KuangJianYunJi) > 0) return true;
         if (c.Subs.HasKeYinType(c, 146) && b == 1000025) return true;
         // 万能剑 / 下张牌算作狂剑（原码 ignoreTempBuff 缺省 false，唯一传 true 的调用点是 IsJianZhen，与此无关）。

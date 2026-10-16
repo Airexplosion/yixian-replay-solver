@@ -33,7 +33,8 @@ public sealed class OracleCase
 
 public class OracleSide
 {
-    public int UnlockGrids { get; set; } = 8;
+    public List<int> XianMoStrategies { get; set; } = new();
+    public Dictionary<int, int> XianMoTempDatas { get; set; } = new();
     public int Hp { get; set; }
     public int Def { get; set; }
     /// <summary>
@@ -79,11 +80,12 @@ public class OracleSide
     public SideInput ToSide(string uid) => new()
     {
         Uid = uid,
-        UnlockGrids = UnlockGrids,
         StartHp = Hp,
         StartDef = Def,
         Life = Life,
         FateStrategies = Fate,
+        XianMoStrategies = XianMoStrategies,
+        XianMoTempDatas = XianMoTempDatas,
         Talents = Talents,
         KeYinCards = Keyin,
         Resonance = Resonance,

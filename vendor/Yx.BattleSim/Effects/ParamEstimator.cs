@@ -68,7 +68,9 @@ public static class ParamEstimator
                 return (ParamCardPool)r.Lo == ParamCardPool.HuaShenSameWuXing
                     ? ParamPools.PickHuaShenSameWuXing(c)
                     : Pick(ParamPools.Cards(c, (ParamCardPool)r.Lo));
-            case ParamKind.HandPick: return PickHandConsumeOrSustain(c);
+            case ParamKind.HandPick:
+                return (HandPickFilter)r.Lo == HandPickFilter.ConsumeOrSustain
+                    ? PickHandConsumeOrSustain(c) : PickHandByName(c, (HandPickFilter)r.Lo, r.Hi);
             case ParamKind.Formula: return ParamFormulas.Evaluate(c, r.CardId);
             default:
                 _unknown++;
@@ -85,6 +87,26 @@ public static class ParamEstimator
         var list = c.GetDebuffList();
         if (list.Count == 0) return -1;
         return (int)list[Draw(0, list.Count - 1)];
+    }
+
+    /// <summary>
+    /// 7000111 五行阵旗：手牌中**第 1 张**五行灵阵 / 五行灵印牌；没有 → -1。
+    /// 「最高 maxLevel 级」是**升级等级**（rarity + 1）的上限：超出的牌**降到该级再用**，不是排除。
+    /// 10-08 实机（战绩 gma75h4zm8 第 17 轮）：手里只有 2 级土灵阵，1 级阵旗实际给了 1 级土灵阵的 4 防；
+    /// 早先按卡表 lv（境界）≤ maxLevel 过滤，筑基的土灵阵被排除 → 整段没执行。描述 10-08 起也写明「第 1 张」。
+    /// </summary>
+    private static int PickHandByName(Combatant c, HandPickFilter filter, int maxLevel)
+    {
+        foreach (int id in c.LastRoundHandCards)
+        {
+            string name = c.Config.CardName(id);
+            if (!GridFunctions.IsWuXingCard(name)) continue;
+            if (filter == HandPickFilter.WuXingLingZhen ? !name.Contains("灵阵") : !name.Contains("灵印")) continue;
+            int rarity = CardTypes.Rarity(id);
+            if (maxLevel > 0 && rarity > maxLevel - 1) return id - (rarity - (maxLevel - 1)) * 10000;
+            return id;
+        }
+        return -1;
     }
 
     /// <summary>349 梦•回响阵纹：手牌中的消耗 / 持续牌里均匀挑一张；没有 → -1。</summary>

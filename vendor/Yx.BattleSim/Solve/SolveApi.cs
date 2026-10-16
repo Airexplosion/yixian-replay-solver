@@ -20,6 +20,8 @@ public static class SolveApi
     {
         public required PuzzleSolver Solver { get; init; }
         public required CancellationTokenSource Cts { get; init; }
+        public long LastPollMs = Environment.TickCount64;
+        public Timer? Lease;
     }
 
     public static string Start(string requestJson)
@@ -33,6 +35,10 @@ public static class SolveApi
             var job = new Job { Solver = solver, Cts = new CancellationTokenSource() };
             int id = Interlocked.Increment(ref _nextId);
             Jobs[id] = job;
+            // Disabled hot-update owners lose queued native cancellations. A live review polls every 0.3s;
+            // reclaim its otherwise-unbounded native job only when that connection disappears.
+            if (req.SearchMode is "existence" or "exhaustive")
+                job.Lease = new Timer(_ => ExpireAbandoned(id, job), null, 5000, 5000);
             var t = new Thread(() => solver.Run(job.Cts.Token)) { IsBackground = true, Name = "yxsim-solve-" + id };
             t.Start();
             return "{\"ok\":true,\"job\":" + id + "}";
@@ -46,8 +52,13 @@ public static class SolveApi
         {
             int id = JobId(requestJson);
             if (!Jobs.TryGetValue(id, out var job)) return Error("没有这个任务：" + id);
+            Interlocked.Exchange(ref job.LastPollMs, Environment.TickCount64);
             var p = job.Solver.Snapshot();
-            if (p.State is "done" or "cancelled" or "error") Jobs.TryRemove(id, out _);
+            if (p.State is "done" or "cancelled" or "error")
+            {
+                Jobs.TryRemove(id, out _);
+                job.Lease?.Dispose();
+            }
             return JsonSerializer.Serialize(SolveReport.From(id, p), SolveJsonContext.Default.SolveReport);
         }
         catch (Exception e) { return Error(e.Message); }
@@ -62,6 +73,14 @@ public static class SolveApi
             return "{\"ok\":true}";
         }
         catch (Exception e) { return Error(e.Message); }
+    }
+
+    private static void ExpireAbandoned(int id, Job job)
+    {
+        if (Environment.TickCount64 - Interlocked.Read(ref job.LastPollMs) < 30000L) return;
+        job.Cts.Cancel();
+        Jobs.TryRemove(id, out _);
+        job.Lease?.Dispose();
     }
 
     private static int JobId(string json)
@@ -85,7 +104,12 @@ public sealed class SolveReport
     public string State { get; set; } = "";
     public long Evaluated { get; set; }
     public double Candidates { get; set; }
+    public long Enumerated { get; set; }
+    public string Phase { get; set; } = "search";
+    public string SearchMode { get; set; } = "rank";
     public bool Exhaustive { get; set; }
+    public bool CanWin { get; set; }
+    public bool HasRandom { get; set; }
     public long ElapsedMs { get; set; }
     public int Seed { get; set; }
     public int Samples { get; set; }
@@ -98,6 +122,8 @@ public sealed class SolveReport
         {
             Job = job, State = p.State, Evaluated = p.Evaluated, Candidates = p.Candidates,
             Exhaustive = p.Exhaustive, ElapsedMs = p.ElapsedMs, Error = p.Error, Ok = p.State != "error",
+            CanWin = p.CanWin, HasRandom = p.HasRandom,
+            Enumerated = p.Enumerated, Phase = p.Phase, SearchMode = p.SearchMode,
             Seed = p.Seed, Samples = p.Samples,
         };
         foreach (var e in p.Best)
@@ -108,6 +134,7 @@ public sealed class SolveReport
                 MinClass = e.Score.MinClass, SumClass = e.Score.SumClass, SumGap = e.Score.SumGap,
                 SumKillTurn = e.Score.SumKillTurn,
                 RandomWinPenalty = e.Score.RandomWinPenalty,
+                AlternativeFor = e.AlternativeFor,
             };
             foreach (var o in e.Orders)
                 re.Orders.Add(new SolveReportOrder
@@ -124,6 +151,8 @@ public sealed class SolveReport
 
 public sealed class SolveReportEntry
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AlternativeFor { get; set; }
     public List<int> Cards { get; set; } = new();
     public int MinClass { get; set; }
     public int SumClass { get; set; }

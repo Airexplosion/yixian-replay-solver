@@ -106,6 +106,9 @@ public interface IArrangementEvaluator
     /// <summary>对第 <paramref name="foe"/> 个对手样本算（默认忽略序号，用于单对手的实现 / 测试）。</summary>
     OrderResult Evaluate(int[] myBoard, bool meFirst, int foe) => Evaluate(myBoard, meFirst);
 
+    /// <summary>Attainable orders for automatic initiative, for this board and opponent sample.</summary>
+    bool[] AllowedOrders(int[] myBoard, int foe) => throw new InvalidOperationException("Evaluator does not support automatic initiative");
+
     /// <summary>所有请求场景的行为签名；null 表示不支持去重。仅对有望进榜的候选调用。</summary>
     string? EquivalenceKey(int[] myBoard) => null;
 }
@@ -119,6 +122,7 @@ public sealed class SimEvaluator : IArrangementEvaluator
     /// <summary>卡表（摆法空间用它判消耗 / 持续与能否上场）；不是 JSON 配置时为 null。</summary>
     public JsonBattleConfig? Config => _cfg as JsonBattleConfig;
     private readonly SideInput[] _foes;
+    private readonly PuzzleSide[] _foeInputs;
     private readonly int[] _weights;
 
     public SimEvaluator(PuzzleRequest req, IBattleConfig cfg)
@@ -126,6 +130,7 @@ public sealed class SimEvaluator : IArrangementEvaluator
         _req = req;
         _cfg = cfg;
         var foes = req.Foes.Count > 0 ? req.Foes : new List<PuzzleSide> { req.Foe };
+        _foeInputs = foes.ToArray();
         _foes = new SideInput[foes.Count];
         _weights = new int[foes.Count];
         for (int i = 0; i < foes.Count; i++)
@@ -137,6 +142,8 @@ public sealed class SimEvaluator : IArrangementEvaluator
 
     public int FoeCount => _foes.Length;
 
+    public bool[] AllowedOrders(int[] myBoard, int foe) => InitiativeRules.Allowed(_req.Me, myBoard, _foeInputs[foe], _cfg);
+
     public string EquivalenceKey(int[] myBoard)
     {
         var trace = new BattleBehaviorTrace(myBoard);
@@ -144,14 +151,17 @@ public sealed class SimEvaluator : IArrangementEvaluator
         StepLog.BehaviorSink = trace.Observe;
         try
         {
-            bool[] orders = _req.First == "me" ? [true] : _req.First == "foe" ? [false] : [true, false];
             for (int f = 0; f < FoeCount; f++)
+            {
+                bool[] orders = _req.First == "auto" ? AllowedOrders(myBoard, f)
+                    : _req.First == "me" ? [true] : _req.First == "foe" ? [false] : [true, false];
                 foreach (bool first in orders)
                 {
                     trace.Begin(f, first);
                     // 与评分共用抽样/种子/确定性提前结束规则；每个样本的事件都单独进入签名。
                     trace.Result(EvaluateCore(myBoard, first, f, trace));
                 }
+            }
             return trace.ToString();
         }
         finally { StepLog.BehaviorSink = previous; }
@@ -190,12 +200,22 @@ public sealed class SimEvaluator : IArrangementEvaluator
         int cls = wins * 2 > runs ? OrderResult.Win : OrderResult.Loss;
         return new OrderResult(meFirst, cls, my / runs, op / runs)
         {
-            Foe = foe, Weight = _weights[foe], KillTurn = kill / runs,
+            Foe = foe, Weight = OrderWeight(myBoard, meFirst, foe), KillTurn = kill / runs,
             TiPo = tipo / Math.Max(1, runs),
             HadRandom = hadRandom,
             RandomWins = hadRandom ? wins : 0,
             RandomRuns = hadRandom ? runs : 0,
         };
+    }
+
+    private int OrderWeight(int[] board, bool meFirst, int foe)
+    {
+        int percent = Math.Clamp(_req.CurrentOrderWeightPercent, 1, 99);
+        if (!_req.WeightByCurrentInitiative || _req.First != "both" || percent == 50) return _weights[foe];
+        bool[] current = AllowedOrders(board, foe);
+        // Tied speed has no preferred order; its total weight still equals that of unequal-speed boards.
+        int share = current.Length == 2 ? 50 : current[0] == meFirst ? percent : 100 - percent;
+        return _weights[foe] * share;
     }
 
     private OrderResult Once(int[] myBoard, bool meFirst, int foe)
@@ -208,6 +228,15 @@ public sealed class SimEvaluator : IArrangementEvaluator
             Round = _req.Round,
             FirstPlayerUid = meFirst ? "L" : "R",
         };
+        if (_req.DeathFightMode != "record")
+        {
+            bool tied = _req.DeathFightMode == "tie" || (_req.DeathFightMode == "auto"
+                && InitiativeRules.Speed(_req.Me, myBoard, _cfg) == InitiativeRules.Speed(_foeInputs[foe], _foeInputs[foe].Cards, _cfg));
+            input = input with {
+                Left = DeathFightRules.Prepare(input.Left, !meFirst, tied),
+                Right = DeathFightRules.Prepare(input.Right, meFirst, tied),
+            };
+        }
         if (!_req.EarlyKill && !_req.ScoreTiPo)
         {
             var plain = BattleResolver.Resolve(input);

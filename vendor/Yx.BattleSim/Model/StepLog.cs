@@ -10,6 +10,7 @@ namespace Yx.BattleSim.Model;
 public static class StepLog
 {
     [ThreadStatic] public static Action<string>? Sink;
+    [ThreadStatic] internal static Action<string, int, Combatant>? PredictionSink;
     // 求解去重专用，独立于诊断日志，避免并行求解串场。
     [ThreadStatic] internal static Action<string, int, Combatant>? BehaviorSink;
     [ThreadStatic] private static string? _last;

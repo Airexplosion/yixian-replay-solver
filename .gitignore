@@ -16,3 +16,6 @@ tools/restart-api.sh
 tools/install-api.sh
 tools/install-*.sh
 tools/publish-*.sh
+solver-data/
+solver-publish/
+*.local.json

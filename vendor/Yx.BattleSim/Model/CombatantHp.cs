@@ -11,6 +11,7 @@ namespace Yx.BattleSim.Model;
 /// </summary>
 public sealed partial class Combatant
 {
+    [ThreadStatic] internal static Action<Combatant, int, bool>? HpDeltaSink;
     private const int OpenTongXiuHouShouBuChang = 1; // OpenType 占位；DefaultSubsystems 视为开启（实机开着），中性桩返回 false
 
     /// <summary>
@@ -31,9 +32,11 @@ public sealed partial class Combatant
         if (isCost)
         {
             Hp += hpDelta;
+            HpDeltaSink?.Invoke(this, hpDelta, true);
             AfterHpModifyEffect(hpDelta);
             if (Subs.IsTalentResonanceEffective(this, 50) && hpDelta <= -1) ModifyHp(2);
             if (HasFateStrategy(149) && hpDelta <= -1) ModifyTiPo(1);
+            if (HasXianMoStrategy(7102) && hpDelta <= -1) ModifyTiPo(1);
             return hpDelta;
         }
 
@@ -89,6 +92,7 @@ public sealed partial class Combatant
         if (hpDelta > 0)
         {
             if (HasFateStrategy(394)) hpDelta++;
+            if (HasXianMoStrategy(7076)) hpDelta++;
             if (HasBuff(BuffType.HongZaoZong))
             {
                 hpDelta += GetBuffValue(BuffType.HongZaoZong);
@@ -123,6 +127,7 @@ public sealed partial class Combatant
         int applied = hpDelta;
         int overheal = 0;
         Hp += hpDelta;
+        HpDeltaSink?.Invoke(this, hpDelta, false);
         if (Hp > MaxHp)
         {
             if (HasBuff(BuffType.ShengJiZhanFang)) ModifyMaxHp(Hp - MaxHp);
@@ -138,7 +143,7 @@ public sealed partial class Combatant
             ModifyBuffValue(BuffType.AddHpCount, hpDelta);
             ModifyBuffValue(BuffType.HuiHeJiaShengMing, hpDelta);
             ModifyBuffValue(BuffType.JiaShengMingCiShu, 1);
-            if (HasBuff(BuffType.YeDuZhiYin))
+            if (HasBuff(BuffType.YeDuZhiYin) && HasBuff(BuffType.ZiShenHuiHe))   // 10-08：只在自己回合内
             {
                 ModifyBuffValue(BuffType.YeDuZhiYin, -1);
                 ModifyBuffValue(BuffType.ExActionAgain, 1);
@@ -153,6 +158,9 @@ public sealed partial class Combatant
             if (back > 0)
                 CombatMath.ApplyDamage(this, Opponent, DamageInfo.Create(this, DamageType.ReflectDamage, back, skipWoundCheck: true));
         }
+        // 灵源外放（09-29 新增）：溢出的治疗量（未被生机战纺吃掉的部分）反弹给对手。
+        if (overheal > 0 && HasBuff(BuffType.LingYuanWaiFang))
+            CombatMath.ApplyDamage(this, Opponent, DamageInfo.Create(this, DamageType.ReflectDamage, overheal, skipWoundCheck: true));
         if (hpDelta > 0 && HasBuff(BuffType.MengKuiRanBuDong) && !HasBuff(BuffType.MengKuiRanCiShu))
         {
             ModifyBuffValue(BuffType.MengKuiRanCiShu, 1);
@@ -176,6 +184,7 @@ public sealed partial class Combatant
     {
         if (delta == 0) return;
         if (delta > 0 && HasFateStrategy(394)) delta++;
+        if (delta > 0 && HasXianMoStrategy(7076)) delta++;
         if (delta > 0 && HasBuff(BuffType.ShunYing))
             delta += CeilDiv(delta * Config.CardOtherParams(11000019).At(0), 100);
         if (delta < 0) ModifyBuffValue(BuffType.JianShengMingShangXianCiShu, 1);

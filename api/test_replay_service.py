@@ -31,7 +31,7 @@ class ReplayTests(unittest.TestCase):
         snapshot={'usedCards':[3,8,15,36],'handCards':[47],'unlockGrids':4,'talents':[125],
                   'life':40,'extraMaxHp':5,'level':2,'permanentBuffTempDatas':{'10049':1}}
         player={'publicData':{'uid':'private-user-id','username':'private-name','talents':[999],
-                             'lastRoundData':snapshot},'privateData':{}}
+                             'lastRoundData':snapshot},'privateData':{'xianMoData':{'tempDatas':{'1001':3}}}}
         foe={'publicData':{'uid':'other-user-id','lastRoundData':dict(snapshot)},'privateData':{}}
         result=normalize_replay({'uid':'private-user-id','beginRankScore':3500,'diffRankScore':-12,
             'roundStats':[{'round':4,'p1':player,'p2':foe,'firstPlayerId':'other-user-id'}]})
@@ -40,6 +40,7 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(req['me']['cards'],[3,8,15,36,47])
         self.assertEqual(req['slots'],4)
         self.assertEqual(req['first'],'foe')
+        self.assertEqual(req['me']['xianMoTempDatas'],{'1001':3})
         self.assertEqual(req['maxConsumeSustain'],3)
         self.assertEqual(result['match']['rankAfter'],3488)
         self.assertNotIn('private-user-id',str(result))
@@ -83,7 +84,7 @@ class ApiHttpTests(unittest.TestCase):
             status, data = self.get('/api/v1')
         self.assertEqual(status, 200)
         self.assertEqual(data['mode'], 'api-only')
-        self.assertFalse(data['solver']['available'])
+        self.assertTrue(data['solver']['available'])
         self.assertIn('/api/v1/collection', [item['path'] for item in data['endpoints']])
 
     def test_collection_status_uses_stored_data_only(self):
@@ -100,5 +101,32 @@ class ApiHttpTests(unittest.TestCase):
 
     def test_new_endpoints_observe_origin_allowlist(self):
         self.assertEqual(self.get('/api/v1', {'Origin': 'https://untrusted.example'})[0], 403)
+
+    def request(self, method, path, body=None):
+        connection = HTTPConnection(*self.server.server_address, timeout=5)
+        try:
+            connection.request(method, path, body=body, headers={'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            connection.close()
+
+    def test_submit_returns_async_job_and_preserves_request(self):
+        request = {'threads': 4, 'searchMode': 'exhaustive', 'me': {'cards': [2]}, 'foe': {'cards': [3]}}
+        with patch.object(replay_service.solver_jobs.JOBS, 'start', return_value={'job': 'test', 'threads': 4}) as start:
+            status, data = self.request('POST', '/api/v1/solve', json.dumps(request))
+        self.assertEqual(status, 202)
+        self.assertEqual(data['threads'], 4)
+        start.assert_called_once_with(request)
+
+    def test_submit_bad_json_is_a_client_error(self):
+        self.assertEqual(self.request('POST', '/api/v1/solve', '{')[0], 400)
+
+    def test_busy_solver_is_reported_as_conflict(self):
+        with patch.object(replay_service.solver_jobs.JOBS, 'start', side_effect=replay_service.solver_jobs.BusyError('busy')):
+            self.assertEqual(self.request('POST', '/api/v1/solve', '{}')[0], 409)
+
+    def test_unknown_job_is_not_found(self):
+        self.assertEqual(self.request('DELETE', '/api/v1/solve/' + 'a' * 32)[0], 404)
 
 if __name__=='__main__':unittest.main()

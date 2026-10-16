@@ -93,6 +93,7 @@ public static class CardHookFunctions
             src.ModifyBuffValue(BuffType.XiaZhangPaiSuanZuoKuangJianCengJi, 1);
         CheckAdjacentEffectsBeforeCard(src);
         FateStrategyFunctions.OnPlayCard(src, cardId, grid);
+        XianMoStrategyFunctions.OnPlayCard(src, cardId, grid, isTempCard);
 
         // ── IL_016c ──
         if (src.Subs.HasCardInDeck(src, 404)) src.ModifyDef(src.GetBuffValue(BuffType.JiaGong));
@@ -163,7 +164,14 @@ public static class CardHookFunctions
             if (src.HasBuff(BuffType.BengQuanTu))
             {
                 src.ModifyBuffValue(BuffType.SuiFang, src.GetBuffValue(BuffType.BengQuanTu));
-                if (!isLianBeng) src.ModifyBuffValue(BuffType.BengQuanTu, -1);
+                // 09-29：非连崩时整层清除（旧版是扣一层）。
+                if (!isLianBeng) src.RemoveBuff(BuffType.BengQuanTu);
+            }
+            // 崩拳飞骤（09-29 新增）：对方挂同层数破绽，非连崩时清除。
+            if (src.HasBuff(BuffType.BengQuanFeiZhou))
+            {
+                dst.ModifyBuffValue(BuffType.PoZhan, src.GetBuffValue(BuffType.BengQuanFeiZhou));
+                if (!isLianBeng) src.RemoveBuff(BuffType.BengQuanFeiZhou);
             }
             if (src.HasBuff(BuffType.BengQuanJieMai))
             {
@@ -226,7 +234,7 @@ public static class CardHookFunctions
         if (src.HasTalent(200) && !GridFunctions.IsWuXingCard(cardName)) src.ModifyBuffValue(BuffType.JiHuoMuLing, 1);
         // ── 五行灵阵（原码顺序：土 → 水 → 火 → 木 → 木灵疗愈 → 金 → 水木双华）──
         // 阵名对应的元素牌，或（天赋130 / 仙命133 的「相生灵阵」时）该阵**生出的**元素牌。
-        bool xiangShengLingZhen = src.HasTalent(130) || src.HasFateStrategy(133);
+        bool xiangShengLingZhen = src.HasTalent(130) || src.HasFateStrategy(133) || src.HasXianMoStrategy(23080);
         bool IsLingZhen(string self, string gen)
             => cardName.Contains(self) || (xiangShengLingZhen && cardName.Contains(gen));
         if (src.HasBuff(BuffType.TuLingZhen) && IsLingZhen("土灵", "金灵"))
@@ -255,6 +263,25 @@ public static class CardHookFunctions
             src.ModifyHp(src.GetBuffValue(BuffType.JiaGong) * src.GetBuffValue(BuffType.MuLingLiaoYuZhen));
         if (src.HasBuff(BuffType.JinLingZhen) && IsLingZhen("金灵", "水灵"))
             src.ModifyBuffValue(BuffType.FengRui, src.GetBuffValue(BuffType.JinLingZhen));
+        // 星弈链（09-29 新增，卡 4000104）：星弈牌在星位 → +1 星力；不在 → 这格成为星位并回 4000104.o[1] 血。扣一层。
+        if (src.HasBuff(BuffType.XingYiLian) && CardTypes.IsXingYi(src, cardId))
+        {
+            if (GridMarkFunctions.IsXingWei(src, src.CurrentCardGrid)) src.ModifyBuffValue(BuffType.XingLi, 1);
+            else
+            {
+                GridMarkFunctions.AddXingWei(src, src.CurrentCardGrid);
+                src.ModifyHp(cfg.CardOtherParams(4000104).At(1));
+            }
+            src.ModifyBuffValue(BuffType.XingYiLian, -1);
+        }
+        // 木灵散枝叶（09-29 新增，卡 7000112）：吸取 7000112.o[1] + 加攻 的生命，扣一层。
+        if (src.HasBuff(BuffType.MuLingSanZhiYe))
+        {
+            int n = cfg.CardOtherParams(7000112).At(1) + src.GetBuffValue(BuffType.JiaGong);
+            dst.ModifyHp(-n);
+            src.ModifyHp(n);
+            src.ModifyBuffValue(BuffType.MuLingSanZhiYe, -1);
+        }
         // 水木双华阵：水灵 **或** 木灵（无相生条件；早先误套了相生灵阵的门，木灵牌不触发）。
         if (src.HasBuff(BuffType.ShuiMuShuangHuaZhen) && (cardName.Contains("水灵") || cardName.Contains("木灵")))
             src.ModifyAnima(src.GetBuffValue(BuffType.ShuiMuShuangHuaZhen));
@@ -291,6 +318,12 @@ public static class CardHookFunctions
         }
         if (src.HasBuff(BuffType.MengTianSui) && (cardName.Contains("灵印") || cardName.Contains("灵阵")))
             src.ModifyBuffValue(BuffType.ShenFa, 10);
+        // 天髓逆克诀（09-29 新增，卡 455）：五行牌、且上一张用过的五行与这张之间存在克制 → 再行动（受两道次数门）。
+        if (src.HasBuff(BuffType.TianSuiNiKeJue) && GridFunctions.IsWuXingCard(cardName)
+            && src.GetBuffValue(BuffType.ExActionAgain) <= 0
+            && src.GetBuffValue(BuffType.ZaiCiXingDong) < src.ActionAgainPerRound
+            && WuXingFunctions.IsCunZaiWuXingKeZhi((BuffType)src.GetBuffValue(BuffType.UsedWuXing), cardName))
+            src.ModifyBuffValue(BuffType.ExActionAgain, 1);
 
         // ── 天赋循环：按 talent%10000 分派 ──
         if (src.Talents is { Count: > 0 } talents)
@@ -592,8 +625,8 @@ public static class CardHookFunctions
         {
             bool jianQiHits = CardTypes.IsLingJian(src, cardId)
                 || (src.Subs.HasCardInDeck(src, 1000075) && CardTypes.IsJian(src, cardId))
-                || (src.HasFateStrategy(379) && CardTypes.IsYunJian(src, cardId))
-                || (src.HasFateStrategy(387) && cardId == 19);
+                || ((src.HasFateStrategy(379) || src.HasXianMoStrategy(7067)) && CardTypes.IsYunJian(src, cardId))
+                || ((src.HasFateStrategy(387) || src.HasXianMoStrategy(7071)) && cardId == 19);
             if (jianQiHits)
             {
                 int jianQi = src.GetBuffValue(BuffType.JianQi);
@@ -613,13 +646,9 @@ public static class CardHookFunctions
         if (src.IsTalentResonanceEffective(132) && cardName.Contains("掌"))
             CombatMath.Attack(src, foe, cfg.ResonanceOtherParams(132).At(0), 1);
         // ── IL_0ec3 灵玄不息：使用描述带负面状态字样的牌后，追加「层数 + 自身负面数/2」攻 ──
+        // 09-29：去掉了「描述含负面状态 / 内伤 / 外伤…」的门，任何牌打出后都触发。
         if (src.HasBuff(BuffType.LingXuanBuXi))
-        {
-            string desc = cfg.CardDesc(cardId);
-            if (desc.Contains("负面状态") || desc.Contains("内伤") || desc.Contains("外伤") || desc.Contains("虚弱")
-                || desc.Contains("破绽") || desc.Contains("减攻") || desc.Contains("困缚"))
-                CombatMath.Attack(src, foe, src.GetBuffValue(BuffType.LingXuanBuXi) + src.GetDebuffCount() / 2, 1);
-        }
+            CombatMath.Attack(src, foe, src.GetBuffValue(BuffType.LingXuanBuXi) + src.GetDebuffCount() / 2, 1);
         // ── IL_1015 天运•避凶（11000007）/ 天运•趋吉（11000008）──
         // 避凶：使用**没有[开局]**的牌后，加防 o[1] + 回血 o[2]（取 11000007 的配置），扣一层。
         // 趋吉：门是 `TriggerOpening(grid)` 的**非 judge** 调用 —— 判断的同时把[开局]真跑一遍；再造成 o[1] 伤害，扣一层。
@@ -759,7 +788,7 @@ public static class CardHookFunctions
             src.RemoveBuff(BuffType.MengDuanQuanJieShu);
         }
         // 仙命 387：普攻（id 19）把全部灵气转成剑气。早先缺失。
-        if (src.HasFateStrategy(387) && cardId == 19)
+        if ((src.HasFateStrategy(387) || src.HasXianMoStrategy(7071)) && cardId == 19)
         {
             int an = src.Anima;
             src.ModifyAnima(-an);
@@ -776,6 +805,8 @@ public static class CardHookFunctions
             if (mkjz > 0 && CardTypes.IsJianZhen(src, cardId)) CombatMath.Attack(src, foe, mkjz, 1);
             AfterNonTempCard(src, foe, cfg, meta, cardName, cardId, gridNumber);
         }
+        if (src.HasXianMoStrategy(13006) && !src.HadUsed(gridNumber) && gridNumber == src.XianMoGrid(13006))
+            CombatMath.Attack(src, foe, XianMoStrategyFunctions.P(src, 13006), 1);
         // ── IL_1a7f 崩拳•惊触（10000046）：追加「层数 + 本场失去生命/o[1]」攻，然后清掉 ──
         if (src.HasBuff(BuffType.ChuFaJingChu))
         {
@@ -981,7 +1012,9 @@ public static class CardHookFunctions
             src.ModifyBuffValue(BuffType.LianYun, 1);
             src.ModifyBuffValue(BuffType.YunHai, -1);
             if (src.HasFateStrategy(97)) src.ModifyAnima(1);
+            if (src.HasXianMoStrategy(7010)) src.ModifyAnima(1);
             if (src.HasFateStrategy(380)) src.ModifyDef(src.Config.FateOtherParams(380).At(0));
+            if (src.HasXianMoStrategy(7132)) src.ModifyDef(src.Config.XianMoOtherParams(7132).At(0));
             return false;
         }
         if (src.HasTalent(14)) return false;

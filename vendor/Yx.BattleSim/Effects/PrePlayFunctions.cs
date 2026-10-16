@@ -39,6 +39,17 @@ internal static class PrePlayFunctions
         ApplyContinuousTune(actor, card, grid);
         card = Cur(actor, card, grid);
 
+        if (actor.HasBuff(BuffType.PuGongFuZhiShangYiZhangPai) && CardTypes.IsPuTongGongJi(card.Id))
+        {
+            actor.ModifyBuffValue(BuffType.PuGongFuZhiShangYiZhangPai, -1);
+            var previous = GridFunctions.PreviousGridCard(actor, grid);
+            if (previous is not null && previous.Id != 19)
+            {
+                int id = previous.Id;
+                if (actor.Config.CardRarity(id) == 2 && actor.Config.CanUpgrade(CardTypes.BaseId(id))) id -= RarityStep;
+                Replace(actor, grid, id); card = Cur(actor, card, grid);
+            }
+        }
         // 幽冥虚魂拳：这张牌变成**同稀有度的普攻**（cardInfo.id = rarity × 10000）。
         if (actor.HasBuff(BuffType.YouMingXuHunQuan))
         {
@@ -60,6 +71,9 @@ internal static class PrePlayFunctions
         }
         card = UpgradeIf(actor, card, grid, BuffType.KeYinWangBaiLu, CardTypes.IsLingJian(actor, card.Id));
         card = UpgradeIf(actor, card, grid, BuffType.HuaLongDianJing, true);
+        if (actor.HasXianMoStrategy(13003) && !actor.HadUsed(grid) && grid == actor.XianMoGrid(13003)
+            && !actor.Config.CardHidden(card.Id) && actor.Config.CanUpgrade(card.Id))
+        { Replace(actor, grid, card.Id + RarityStep); card = Cur(actor, card, grid); }
         card = UpgradeIf(actor, card, grid, BuffType.ShengJiXiaZhangYunJian, CardTypes.IsYunJian(actor, card.Id));
         // 升级下次狂剑（卡 1030076 施加）：血量高于 o[2]、狂剑、**稀有度 0** 才升级，并扣 o[2] 生命。
         int kjCost = actor.Config.CardOtherParams(1030076).At(2);

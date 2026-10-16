@@ -29,6 +29,8 @@ public static class BattleResolver
     /// <summary>空格 / 牌组走完 = card 0 = 普通攻击 3 攻（rarity0）。</summary>
     private static readonly BattleCard PuGong = new() { Id = 0, Attack = 3, AttackCount = 1 };
     private const int MaxHuiHe = 64;
+    private static readonly BuffType[] RepeatElements = { BuffType.JiHuoMuLing, BuffType.JiHuoHuoLing, BuffType.JiHuoTuLing, BuffType.JiHuoJinLing, BuffType.JiHuoShuiLing };
+    private static readonly string[] RepeatElementNames = { "木灵", "火灵", "土灵", "金灵", "水灵" };
 
     /// <summary>描述里的「[耗尽]」标记：出一次就出局（原码 22262，全池 8 张）。</summary>
     private const string HaoJinMarker = "[耗尽]";
@@ -64,26 +66,33 @@ public static class BattleResolver
         // 开战：原码先手方完整跑完 OnBattleStarted，再轮到后手方（BattleExecuter 15361–15362）；
         // 单方内部顺序见 BattleStartFunctions（头部 → 天赋 → 共鸣 → 仙命 → 上回合永久 buff → 逐格[开局] → 刻印）。
         Combatant opener = input.FirstPlayerUid is { Length: > 0 } fp0 && fp0 == right.Uid ? right : left;
+        SharedBattleStart.Prepare(opener, opener == left ? right : left);
         BattleStartFunctions.OnBattleStarted(opener);
         StepLog.BehaviorSink?.Invoke("opening", 0, opener);
         BattleStartFunctions.OnBattleStarted(opener == left ? right : left);
         StepLog.BehaviorSink?.Invoke("opening", 1, left);
+        StepLog.PredictionSink?.Invoke("opening", 1, left);
 
         // 回合循环：先手 = firstPlayerId（缺省 left）。每「回合」可能出多张（行动权），见 PlayTurn。
         Combatant first = input.FirstPlayerUid is { Length: > 0 } fp && fp == right.Uid ? right : left;
         Combatant second = ReferenceEquals(first, left) ? right : left;
+        if (second.HasFateStrategy(329)) second.ModifyBuffValue(BuffType.XiaCiHouZhaoZhiJieChuFa, 1);   // fate 329 (10-08 audit)
+        if (second.HasXianMoStrategy(7110)) second.ModifyBuffValue(BuffType.XiaCiHouZhaoZhiJieChuFa, 1);
         int steps = 0;
         for (int huiHe = 1; huiHe <= MaxHuiHe; huiHe++)
         {
+            StepLog.PredictionSink?.Invoke("turn-start", huiHe, first);
             steps += PlayTurn(first, second);
             TurnSink?.Invoke(huiHe, left, right);       // 死判之前打点：打死对方的那一回合也算得出来
             StepLog.BehaviorSink?.Invoke("turn", huiHe, left);
+            StepLog.PredictionSink?.Invoke("turn", huiHe, left);
             if (DeathRules.DeathCheck(left, right)) break;
             var tmp = first; first = second; second = tmp;
         }
 
         var outcome = Score(left, right, input, steps);
         StepLog.BehaviorSink?.Invoke("end", steps, left);
+        StepLog.PredictionSink?.Invoke("end", steps, left);
         return outcome;
     }
 
@@ -121,6 +130,7 @@ public static class BattleResolver
         if (!PlayNext(actor, foe)) { FinishTurn(actor); return played; }   // 灵气不够：空转攒灵气，本回合结束
         played++;
         RevivalFunctions.Check(actor);
+        StepLog.PredictionSink?.Invoke("play-end", actor.CurrentCardId, actor);
         // 有人倒下 → 原码 `if (DeathCheck()) break;` 跳出行动循环，随后再判一次死亡就**结束战斗**，
         // **不跑 OnTurnEnded**（15826–15831）。早先这里先 FinishTurn：回合末的水势 / 阵法等又打了已死的一方一轮
         // （水灵一系 b5 偏差的来源：17 水灵•春雨 real R=-2、sim R=-14，差的正是死后那一下水势）。
@@ -131,7 +141,7 @@ public static class BattleResolver
         {
             // 困符/梦转仙：本回合后续「再行动」的收尾豁免。
             bool flag2 = actor.HasBuff(BuffType.Long) || actor.HasBuff(BuffType.WuShiKunXianKunFu)
-                         || actor.HasBuff(BuffType.MengZhuanXian);
+                         || actor.HasBuff(BuffType.MengZhuanXian) || actor.HasXianMoStrategy(28001);
             if (!flag2 && (actor.HasBuff(BuffType.TianYinKunXianQu) || actor.HasBuff(BuffType.BenHuiHeWuFaZaiCiXingDong)))
             {
                 actor.RemoveBuff(BuffType.ExActionAgain);
@@ -164,7 +174,7 @@ public static class BattleResolver
                 flag3 = true;
                 actor.ModifyBuffValue(BuffType.TianSuiZong, -1);
             }
-            int shenFaCost = actor.HasFateStrategy(348) ? 9 : 10;
+            int shenFaCost = actor.HasFateStrategy(348) || actor.HasXianMoStrategy(7065) ? 9 : 10;
             if (!flag3 && actor.GetBuffValue(BuffType.ShenFa) >= shenFaCost && zai < actor.ActionAgainPerRound)
             {
                 flag3 = true;
@@ -200,6 +210,7 @@ public static class BattleResolver
 
             // 再行动的落前联动（顺序照原码）。
             if (actor.HasFateStrategy(340)) actor.ModifyHp(actor.Config.FateOtherParams(340).At(1));
+            if (actor.HasXianMoStrategy(7112)) actor.ModifyHp(actor.Config.XianMoOtherParams(7112).At(1));
             if (actor.HasBuff(BuffType.YingXiaoTu)) actor.ModifyHp(-actor.GetBuffValue(BuffType.YingXiaoTu));
             // 八门金锁阵：反噬「再行动」的一方，伤害取**卡 8000010 的 otherParams[1]**，并消耗一层。
             // ⚠ 早先我取的是 10000147 那张卡（另一个机制），而且**漏了消耗**——buff 永不衰减。
@@ -240,6 +251,12 @@ public static class BattleResolver
                 foe.ModifyMaxHp(-mv);
                 actor.ModifyDef(mv);
             }
+            // 「本场触发过再次行动」计数（原码 IL_3dee，09-29 前为 IL_3b65）：只有走到这里 —— 真的再行动了 —— 才 +1。
+            // ⚠ 早先放在 FinishTurn 里，每个回合结束（包括开局灵气不够的空转回合）都 +1，
+            //   于是「若本场已触发过再次行动则再次行动」（1000093 云剑•追影）在第二回合就误判成立。
+            //   2026-09-29 新卡真机对拍抓到（b7_124 / 128 / 134 / 136）。空转分支原码有两个 break：
+            //   第一个跳出 switch，第二个跳出整个行动循环，走不到 IL_3dee。
+            actor.ModifyBuffValue(BuffType.ZaiCiXingDongCiShu, 1);
 
             // 原码 IL_3b65：`ResurrectionCheckAsync` 后 `while (!DeathCheck())` —— 再行动的代价（影枭兔扣血、
             // 困缚 -15、八门金锁阵…）把人打死时**不再出下一张牌**。早先 sim 直接出牌，死人还多打了一下
@@ -250,6 +267,7 @@ public static class BattleResolver
             if (!PlayNext(actor, foe)) { FinishTurn(actor); return played; }   // 灵气不够：空转攒灵气，本回合结束
             played++;
             RevivalFunctions.Check(actor);
+            StepLog.PredictionSink?.Invoke("play-end", actor.CurrentCardId, actor);
             // 有人倒下 → 原码 `if (DeathCheck()) break;` 跳出行动循环，随后再判一次死亡就**结束战斗**，
         // **不跑 OnTurnEnded**（15826–15831）。早先这里先 FinishTurn：回合末的水势 / 阵法等又打了已死的一方一轮
         // （水灵一系 b5 偏差的来源：17 水灵•春雨 real R=-2、sim R=-14，差的正是死后那一下水势）。
@@ -257,10 +275,9 @@ public static class BattleResolver
         }
     }
 
-    /// <summary>回合收尾：攻数/再行动计数 + 回合结束 tick（对应 Execute 里 OnTurnEnded 那段）。</summary>
+    /// <summary>回合收尾：回合结束 tick（对应 Execute 里 OnTurnEnded 那段）。「再行动次数」计数在行动循环里，不在这里。</summary>
     private static void FinishTurn(Combatant actor)
     {
-        actor.ModifyBuffValue(BuffType.ZaiCiXingDongCiShu, 1);
         TurnTickFunctions.OnTurnEnded(actor);
         // ⚠ 上限**不**每回合重置：原码只在 CreateTempData 里置 1（开局一次）。「本回合」的加成
         //   （天赋 222 / 刻印 132）是靠同时挂 KeYinShanFeng、回合结束时在 OnTurnEnded 里减回去的；
@@ -392,6 +409,7 @@ public static class BattleResolver
         PrePlayFunctions.Apply(actor, foe, card, item.Slot);
         card = ResolveCard(actor, item);
 
+        StepLog.PredictionSink?.Invoke("play-start", card.Id, actor);
         PlayCard(actor, foe, card);
         // 出牌收尾：持续 / 消耗牌用一次就出局，然后才回到队尾。顺序不能反（MarkUsed 要在 PushCard 前）。
         // 出局判据三条：持续牌 / 消耗牌（原码 15608），以及**描述里带 `[耗尽]` 的牌**（原码 22262
@@ -470,9 +488,9 @@ public static class BattleResolver
             CardEffects.ExecuteEffect(actor, foe, card);
         }
         // 云剑•连雨：云剑牌。
-        if (actor.HasBuff(BuffType.YunJianLianYu) && CardTypes.IsYunJian(actor, card.Id))
+        if (actor.HasBuff(BuffType.FuYunLianHuanBu) && CardTypes.IsYunJian(actor, card.Id))
         {
-            actor.ModifyBuffValue(BuffType.YunJianLianYu, -1);
+            actor.ModifyBuffValue(BuffType.FuYunLianHuanBu, -1);
             CardEffects.ExecuteEffect(actor, foe, card);
         }
         // 崩拳•双影（10000060）：崩拳牌；连崩牌（10000035）不扣层。
@@ -510,6 +528,31 @@ public static class BattleResolver
             actor.ModifyBuffValue(BuffType.LingZhenHuiXiang, -1);
             CardEffects.ExecuteEffect(actor, foe, baseCard);
             ctx.Restore(actor);
+        }
+        // 混沌潜影（09-29 新增）：每出一张牌消耗一层（原码 IL_32f7，灵阵回响之后）。
+        if (actor.HasBuff(BuffType.HunDunQianYing)) actor.ModifyBuffValue(BuffType.HunDunQianYing, -1);
+
+        // 仙魔 5009：主执行之后临时升一级再完整生效一次，然后还原卡牌；不是永久升级。
+        // 满级 / 不可升级牌仍按原级再执行（游戏只用 noUpgrade 判断能否升一级）。
+        if (actor.HasXianMoStrategy(5009) && actor.Config.CardLevel(card.Id) == 1
+            && !actor.Config.CardHidden(card.Id) && grid == actor.XianMoGrid(5009))
+        {
+            BattleCard repeat = actor.Config.CanUpgrade(card.Id) ? actor.Config.BuildCard(card.Id + 10000) : card;
+            var ctx = CardContext.Capture(actor);
+            CardContext.Set(actor, repeat);
+            CardEffects.ExecuteEffect(actor, foe, repeat);
+            ctx.Restore(actor);
+        }
+
+        if (actor.HasTalent(280))
+        {
+            for (int i = 0; i < RepeatElements.Length; i++)
+                if (actor.GetBuffValue(RepeatElements[i]) >= 2 && actor.CurrentCardName.Contains(RepeatElementNames[i]))
+                {
+                    actor.ModifyBuffValue(RepeatElements[i], -1);
+                    CardEffects.ExecuteEffect(actor, foe, card);
+                    break;
+                }
         }
 
         if (Trace is not null)
@@ -621,14 +664,20 @@ public static class BattleResolver
             ResonancePermanentFlags = s.ResonancePermanentFlags,
             TalentDatas = s.TalentDatas,
             PrivateTalentDatas = s.PrivateTalentDatas,
+            XianMoStrategies = s.XianMoStrategies,
+            XianMoTempDatas = s.XianMoTempDatas,
             MaxKeYin = s.MaxKeYin,
         };
-        // Game InitData restores carried physique before OnBattleStarted.
-        // Initial state uses direct assignment, avoiding gain-physique hooks.
-        int initialBody = c.GetLastRoundPermanentBuffValue(BuffType.TiPo);
-        if (initialBody > 0) { c.TiPo = initialBody; c.MaxHp += initialBody; c.Hp += initialBody; }
-        int initialBodyCap = c.GetLastRoundPermanentBuffValue(BuffType.TiPoShangXian);
-        if (initialBodyCap > 0) c.SetBuffValue(BuffType.TiPoShangXian, initialBodyCap);
+        // BattleCharacter.InitData 在开局触发前导入上一轮体魄与上限。
+        // 只增加最大生命；继承的体魄不算本场获得，不回血，也不触发增体魄的天赋 / 仙命。
+        int carriedPhysique = c.GetLastRoundPermanentBuffValue(BuffType.TiPo);
+        if (carriedPhysique > 0)
+        {
+            c.TiPo = carriedPhysique;
+            c.MaxHp += carriedPhysique;
+        }
+        int carriedPhysiqueCap = c.GetLastRoundPermanentBuffValue(BuffType.TiPoShangXian);
+        if (carriedPhysiqueCap > 0) c.SetBuffValue(BuffType.TiPoShangXian, carriedPhysiqueCap);
         for (int i = 0; i < c.Board.Count; i++) c.ReplaceCard(i, c.Board[i]);   // 卡 19 按天赋改牌面
         var used = new int[c.Board.Count];
         for (int i = 0; i < used.Length; i++) used[i] = c.Board[i].Id;

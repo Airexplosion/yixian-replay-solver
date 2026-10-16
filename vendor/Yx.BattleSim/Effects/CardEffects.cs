@@ -12,13 +12,13 @@ namespace Yx.BattleSim.Effects;
 /// 有特殊效果的牌（挂 buff / 附伤 / 条件效果 / 五行…）逐个从对应 Card_&lt;baseId&gt; 移植注册——这是 P5 的长期 grind，
 /// 每条移植后应对 oracle（B2b：仙命/炼化/注入 造带效果对拍）验证。见覆盖账。
 /// </summary>
-public static class CardEffects
+public static partial class CardEffects
 {
     public delegate void Effect(Combatant src, Combatant dst, BattleCard card);
 
     private static readonly Dictionary<int, Effect> ByBase = new();
 
-    static CardEffects() { RegisterAll(); }
+    static CardEffects() { RegisterAll(); RegisterNewCards0929(); RegisterBaijia1015(); }
 
     /// <summary>出牌：手工注册效果（优先）→ 数据驱动效果(342 规整卡)→ 默认(加防+攻击)。</summary>
     public static void Play(Combatant src, Combatant dst, BattleCard card)
@@ -40,6 +40,7 @@ public static class CardEffects
         {
             // 219 双节棍 / 419：原码效果最后 SwitchJiaShi，抽取器不认识这个调用（ops 里没有）。
             if (baseId == 219 || baseId == 419) SwitchJiaShi(src);
+            if (baseId == 15 && src.IsTalentResonanceEffective(109)) src.SetTalentResonanceTempFlag(109, true);   // Card_15 末句（res 109）
             return;
         }
         Default(src, dst, card);
@@ -122,6 +123,12 @@ public static class CardEffects
             src.ModifyBuffValue(BuffType.QiShi, 1);
             src.ModifyDef(src.Config.FateOtherParams(335).At(0));
         }
+        else if (src.HasXianMoStrategy(7111))
+        {
+            src.ModifyBuffValue(BuffType.QiShiShangXian, 1);
+            src.ModifyBuffValue(BuffType.QiShi, 1);
+            src.ModifyDef(XianMoStrategyFunctions.P(src, 7111));
+        }
         else if (src.HasBuff(BuffType.QuanJiaShi))
         {
             src.RemoveBuff(BuffType.QuanJiaShi);
@@ -136,6 +143,8 @@ public static class CardEffects
         }
         if (src.HasFateStrategy(349))
             CombatMath.ApplyDamage(src, src.Opponent, DamageInfo.Create(src, DamageType.Damage, src.Config.FateOtherParams(349).At(0)));
+        if (src.HasXianMoStrategy(7113))
+            CombatMath.ApplyDamage(src, src.Opponent, DamageInfo.Create(src, DamageType.Damage, XianMoStrategyFunctions.P(src, 7113)));
         if (src.HasFateStrategy(429))
         {
             if (src.GetBuffValue(BuffType.QuanJiaShi) > 0)
@@ -143,6 +152,8 @@ public static class CardEffects
             else
                 src.ModifyBuffValue(BuffType.JiaGong, src.Config.FateOtherParams(429).At(1));
         }
+        if (src.HasXianMoStrategy(7090))
+            src.ModifyBuffValue(src.HasBuff(BuffType.QuanJiaShi) ? BuffType.QiShi : BuffType.JiaGong, XianMoStrategyFunctions.P(src, 7090, src.HasBuff(BuffType.QuanJiaShi) ? 0 : 1));
         // 原码末尾：`var anim = src.animator as CharacterBattleAnimator_4000005; if (anim != null) anim.jiaShi = …;
         //   anim.PlayAnimation(…)` —— PlayAnimation 在 null 判断**外面**：非拳师角色（4000005）必定空引用抛异常，
         //   ExecuteEffect 的 try 接住后**跳过这张牌的出牌后钩子**（本张攻击计数不清零，残留到下一张 → 察体等提前触发；b7_179 / 4 / 133）。
@@ -314,6 +325,7 @@ public static class CardEffects
             num++;
             if (num > 0) num = 0;
         }
+        if (src.HasXianMoStrategy(7051) && src.Config.CardDesc(card.Id).Contains("再次行动") && num < 0) num++;
         // 灵雀在后：后招牌按层数减耗。
         if (src.HasBuff(BuffType.LingQueZaiHouJiaLingQi) && CardTypes.IsHouZhao(src, card.Id) && num < 0)
         {
@@ -755,9 +767,11 @@ public static class CardEffects
             if (src.Config.CardLevel(card.Id) > LevelJinDan && src.GetNextRandomValue(ParamRequest.Percent(4000073)) < 10)
                 CombatMath.Attack(src, dst, card.Attack + ex, 1);
         };
-        // Card_29 狂雷电闪：施加 o[0] 层破绽；卡组中（除本格）有名含「雷」的牌才再行动（否则不再行动）。
+        // Card_29 狂雷电闪：[灵气]+anima（2026-10-08 新增，先于破绽）；施加 o[0] 层破绽；
+        // 卡组中（除本格）有名含「雷」的牌才再行动（否则不再行动）。
         ByBase[29] = static (src, dst, card) =>
         {
+            src.ModifyAnima(AnimaOf(src, card));
             dst.ModifyBuffValue(BuffType.PoZhan, src.Config.CardOtherParams(card.Id).At(0));
             src.CurrentCardActionAgain = CountDeckByName(src, src.CurrentCardGrid, nm => nm.Contains("雷")) > 0;
         };
@@ -1139,10 +1153,10 @@ public static class CardEffects
             int an = AnimaOf(src, card);
             if (an > 0) src.ModifyAnima(an);
             if (card.Def > 0) src.ModifyDef(card.Def);
-            int kinds = WuXingFunctions.GetWuXingCountInDeck(src);
+            int kinds = WuXingFunctions.GetWuXingCountInDeck(src, checkTalent278: true);
             if (src.Subs.HasKeYinType(src, 104) && kinds <= 2)
                 src.ModifyBuffValue(BuffType.WuXingTianSuiJue, o0 * 2);
-            else if (kinds == 1 || (src.HasFateStrategy(408) && kinds == 2))
+            else if (kinds == 1 || ((src.HasFateStrategy(408) || src.HasXianMoStrategy(7082)) && kinds == 2))
                 src.ModifyBuffValue(BuffType.WuXingTianSuiJue, o0);
         };
         // Card_10000062 破茧化蝶：身法 +o[0]；清空负面状态，按清掉的层数 n：体魄 +n×o[1]、生命 +n×o[1]。
@@ -1539,6 +1553,7 @@ public static class CardEffects
         ByBase[8000012] = static (src, dst, card) =>
         {
             IReadOnlyList<int> p = src.Config.CardOtherParams(card.Id);
+            src.ModifyHp(p.At(1));
             if (src.Board.Count > 0)
             {
                 int num2 = src.Board[0].Id;                      // GetBattleDeckIdList()[0]
@@ -1917,25 +1932,20 @@ public static class CardEffects
         };
 
         // ── Card_222 转势：「[身法]+o[0]；[拳]：多加 o[1] [身法]；[棍]：attack 攻；使用后[切换架势]」──
-        // 原码 Card_222.OnExecuted（goto 链）：
-        //     if (HasBuff(QuanJiaShi)) → IL_01b9: ModifyBuffValue(ShenFa, o[0] + o[1]);          // 拳
-        //     if (HasBuff(GunJiaShi))  → ModifyBuffValue(ShenFa, o[0]); Attack(attack, attackCount); // 棍
-        //     IL_0320: card_.SwitchJiaShi(src);                                                       // 两支都到
-        // ⚠ 抽取结果把拳分支那句 `ShenFa += o[0]+o[1]` 当成了**无条件**，又不认识 SwitchJiaShi（`partial`）。
-        //   **没有架势时两支都不走**（探针角色不是拳师，开局不给架势）→ 原码什么都不加；
-        //   sim 却白给 12 层身法（身法 ≥10 会换一次再行动）—— 卡 222 偏差 33。
+        // 2026-10-08 版原码 Card_222.OnExecuted（按 IL 偏移还原 goto 链）：
+        //     IL_01d7: ModifyBuffValue(ShenFa, o[0]);                          // 无条件（旧版无架势时什么都不加）
+        //              if (HasBuff(QuanJiaShi)) ModifyBuffValue(ShenFa, o[1]);  // 拳：分两次加（旧版一次加 o0+o1）
+        //     IL_029b: if (HasBuff(GunJiaShi)) Attack(attack, attackCount);    // 棍
+        //     IL_033a: card_.SwitchJiaShi(src);
+        // 拳 / 棍判定都在加身法之后各自读一次 buff（中间没有改架势的语句，两者互斥）。
         ByBase[222] = static (src, dst, card) =>
         {
             IReadOnlyList<int> p = src.Config.CardOtherParams(card.Id);
+            src.ModifyBuffValue(BuffType.ShenFa, p.At(0));
             if (src.HasBuff(BuffType.QuanJiaShi))
-            {
-                src.ModifyBuffValue(BuffType.ShenFa, p.At(0) + p.At(1));
-            }
-            else if (src.HasBuff(BuffType.GunJiaShi))
-            {
-                src.ModifyBuffValue(BuffType.ShenFa, p.At(0));
+                src.ModifyBuffValue(BuffType.ShenFa, p.At(1));
+            if (src.HasBuff(BuffType.GunJiaShi))
                 CombatMath.Attack(src, dst, card.Attack, card.AttackCount);
-            }
             SwitchJiaShi(src);
         };
 

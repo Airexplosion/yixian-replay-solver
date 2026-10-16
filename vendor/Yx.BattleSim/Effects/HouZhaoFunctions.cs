@@ -39,7 +39,7 @@ public static class HouZhaoFunctions
                 src.ModifyMaxHp(num);
                 src.ModifyHp(num);
             }
-            if (src.HasFateStrategy(332))
+            if (src.HasFateStrategy(332) || src.HasXianMoStrategy(7057))
                 src.Opponent.ModifyBuffValue(BuffType.XuRuo, 1);
         }
 

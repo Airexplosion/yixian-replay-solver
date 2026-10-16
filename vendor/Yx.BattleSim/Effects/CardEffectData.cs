@@ -728,7 +728,7 @@ public static class CardEffectData
             // 五行激活计数（10551 / 24684）：种类数 / 层数之和。卡 13 用它决定「再次行动」。
             case "wuxingcount":  return WuXingFunctions.GetWuXingActiveCount(s);
             case "wuxingnumber": return WuXingFunctions.GetWuXingActiveNumber(s);
-            case "wuxingindeck": return WuXingFunctions.GetWuXingCountInDeck(s);
+            case "wuxingindeck": return WuXingFunctions.GetWuXingCountInDeck(s, p.Arg is not null && Eval(p.Arg, c) != 0);
             case "zongzicount":  return s.ZongZiBuffCount();
             default:
                 // ctype:<牌型> —— 走 CardTypes 里同名谓词

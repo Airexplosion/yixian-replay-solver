@@ -3,6 +3,8 @@ namespace Yx.BattleSim.Model;
 /// <summary>一方的战斗输入：起始血、防、仙命/天赋、以及按格顺序的摆牌。不可变。</summary>
 public sealed record SideInput
 {
+    public IReadOnlyCollection<int> XianMoStrategies { get; init; } = Array.Empty<int>();
+    public IReadOnlyDictionary<int, int> XianMoTempDatas { get; init; } = new Dictionary<int, int>();
     public required string Uid { get; init; }
     public required int StartHp { get; init; }
     public int StartDef { get; init; }

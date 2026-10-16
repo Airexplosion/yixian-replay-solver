@@ -79,6 +79,12 @@ public static class CombatMath
             attacker.ModifyBuffValue(BuffType.JiXu, -1);
             target.ModifyBuffValue(BuffType.PoZhan, 1);
         }
+        // 龙影潜遁（09-29 新增）：被攻击时整层转成潜遁、清除。
+        if (target.HasBuff(BuffType.LongYingQianDun))
+        {
+            target.ModifyBuffValue(BuffType.QianDun, target.GetBuffValue(BuffType.LongYingQianDun));
+            target.RemoveBuff(BuffType.LongYingQianDun);
+        }
         // 受击前加防（攻击结算前先给对方加防并消耗）。
         if (target.HasBuff(BuffType.XiaCiShouDaoGongJiQianJiaFang))
         {
@@ -139,6 +145,13 @@ public static class CombatMath
             int dv = cfg.FateOtherParams(424).At(0);
             if (dv != 0) num += attacker.GetDebuffCount() / dv;
         }
+        if (attacker.HasXianMoStrategy(7088) && hasCard && attacker.CurrentCardGrid == 7 && !after)
+        {
+            int divisor = XianMoStrategyFunctions.P(attacker, 7088);
+            if (divisor > 0) num += attacker.GetDebuffCount() / divisor;
+        }
+        if (attacker.HasXianMoStrategy(3003) && hasCard && attacker.CurrentCardGrid >= XianMoStrategyFunctions.P(attacker, 3003) && !after)
+            num += XianMoStrategyFunctions.P(attacker, 3003, 1);
         // 仙命 432：崩拳按「灵气 / o[0]」加攻（封顶 o[1]）。早先缺失。
         if (attacker.HasFateStrategy(432) && isBengQuan && !after)
         {
@@ -146,6 +159,11 @@ public static class CombatMath
             int v = dv == 0 ? 0 : attacker.Anima / dv;
             v = Math.Min(v, cfg.FateOtherParams(432).At(1));
             num += v;
+        }
+        if (attacker.HasXianMoStrategy(7092) && isBengQuan && !after)
+        {
+            int divisor = XianMoStrategyFunctions.P(attacker, 7092);
+            num += Math.Min(divisor > 0 ? attacker.Anima / divisor : 0, XianMoStrategyFunctions.P(attacker, 7092, 1));
         }
         // 刻印 56：崩拳加攻。早先缺失。
         if (attacker.Subs.HasKeYinType(attacker, 56) && isBengQuan && !after)
@@ -261,6 +279,8 @@ public static class CombatMath
         if (attacker.HasFateStrategy(152)
             && (cfg.CardDesc(cardId).Contains("灵气") || ((cfg as JsonBattleConfig)?.Card(cardId)?.Anima ?? 0) < 0))
             num += cfg.FateOtherParams(152).At(0);
+        if (attacker.HasXianMoStrategy(7101) && hasCard && (cfg.CardDesc(cardId).Contains("灵气") || cfg.BuildCard(cardId).Anima < 0))
+            num += XianMoStrategyFunctions.P(attacker, 7101);
         if (attacker.HasBuff(BuffType.QiRuoXuanHe))
         {
             attacker.ModifyBuffValue(BuffType.QiRuoXuanHe, -1);
@@ -269,7 +289,7 @@ public static class CombatMath
         if (attacker.HasBuff(BuffType.GongJiJiaQiSHi))
             attacker.ModifyBuffValue(BuffType.QiShi, attacker.GetBuffValue(BuffType.GongJiJiaQiSHi));
         // 仙命 428：「掌」牌打出时**不消耗**气势。
-        int qiShiCost = attacker.HasFateStrategy(428) && cardName.Contains("掌") ? 0 : 1;
+        int qiShiCost = (attacker.HasFateStrategy(428) || attacker.HasXianMoStrategy(7120)) && cardName.Contains("掌") ? 0 : 1;
         // 气势 / 玄心斩破 / 气沉丹田+：牌组里有 10000084 时走「加攻」，否则走下方「倍率」。
         bool qiShiLike = attacker.HasBuff(BuffType.QiShi) || attacker.HasBuff(BuffType.XuanXinZhanPo) || attacker.HasBuff(BuffType.QiChenDanTianPlus);
         if (qiShiLike && attacker.Subs.HasCardInDeck(attacker, 10000084))
@@ -589,6 +609,13 @@ public static class CombatMath
             attacker.RemoveBuff(BuffType.KeYinDiSha);
             if (add > 0) attacker.ModifyDef(add);
         }
+        // 逐尘步（09-29 新增）：攻击时消耗一层，每 3 点实际伤害加 1 防（10-08：/2 → /3）。
+        if (attacker.HasBuff(BuffType.ZhuChenBu) && info.Type == DamageType.Attack)
+        {
+            attacker.ModifyBuffValue(BuffType.ZhuChenBu, -1);
+            int add = dealt / 3;
+            if (add > 0) attacker.ModifyDef(add);
+        }
         // ---- 落伤后链（以下全部按「实际掉血 dealt」计，对应原码 OnHit 之后的 num）----
         // 刻印·无狂焰：命中即给对方挂外伤、消耗。
         if (dealt > 0 && attacker.GetBuffValue(BuffType.KeYinWuKuangYan) > 0 && info.Type == DamageType.Attack)
@@ -706,6 +733,13 @@ public static class CombatMath
             int add = attacker.GetBuffValue(BuffType.XiaCiGongJiShiJiaNeiShang);
             attacker.RemoveBuff(BuffType.XiaCiGongJiShiJiaNeiShang);
             target.ModifyBuffValue(BuffType.NeiShang, add);
+        }
+        // 龙威震慑（09-29 新增）：整层转成对方的减攻、清除。
+        if (attacker.GetBuffValue(BuffType.LongWeiZhenShe) > 0)
+        {
+            int add = attacker.GetBuffValue(BuffType.LongWeiZhenShe);
+            attacker.RemoveBuff(BuffType.LongWeiZhenShe);
+            target.ModifyBuffValue(BuffType.JianGong, add);
         }
     }
 }

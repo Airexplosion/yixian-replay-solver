@@ -17,6 +17,11 @@ namespace Yx.BattleSim.Model;
 /// </summary>
 public sealed partial class Combatant
 {
+    public IReadOnlyCollection<int> XianMoStrategies = Array.Empty<int>();
+    public IReadOnlyDictionary<int, int> XianMoTempDatas = new Dictionary<int, int>();
+    public bool HasXianMoStrategy(int id) => XianMoStrategies.Contains(id);
+    public bool XianMoSwitchActive(int id) => !XianMoTempDatas.TryGetValue(id, out var value) || value == 0;
+    public int XianMoGrid(int id) => XianMoTempDatas.TryGetValue(id, out var value) ? value : 0;
     public required string Uid { get; init; }
 
     public int Hp;
@@ -64,7 +69,7 @@ public sealed partial class Combatant
     /// <summary>取下一个玩家参数（对应游戏的 <c>battleParamsQueue.Dequeue()</c>）。取空返回 -1。</summary>
     /// <summary>
     /// TryCostAnima（原码 10961）：「最多耗 maxCost 灵气」—— 有多少耗多少（上限 maxCost），返回实际耗的量。
-    /// 共鸣 50 + 天赋 153：不够的部分改为按天赋 153 的倍率扣血（共鸣 50 免体魄），付得起就视作耗满。
+    /// 共鸣 50 + 天赋 153：不够的部分改为按天赋 153 的倍率扣血，付得起就视作耗满。
     /// ⚠ 有副作用（扣灵气），卡效果里只能调用一次；不要做成数据驱动的谓词（同一守卫下多条 op 会重复扣）。
     /// </summary>
     public int TryCostAnima(int maxCost)
@@ -75,13 +80,11 @@ public sealed partial class Combatant
         ModifyAnima(-num);
         if (HasTalentResonance(50) && HasTalent(153) && num < maxCost)
         {
+            // 10-08：灵涌不竭不再耗体魄，只扣血。
             int hpCost = (maxCost - num) * Config.TalentOtherParams(153).At(0);
-            int tiPoCost = (maxCost - num) * Config.TalentOtherParams(153).At(1);
-            if (HasTalentResonance(50)) tiPoCost = 0;
-            if (hpCost < Hp && tiPoCost <= TiPo)
+            if (hpCost < Hp)
             {
                 ModifyHp(-hpCost, canRevive: false, isCost: true);
-                if (tiPoCost > 0) ModifyTiPo(-tiPoCost);
                 num = maxCost;
             }
         }
@@ -285,7 +288,7 @@ public sealed partial class Combatant
     public bool HasBuff(BuffType buff)
     {
         if (buff == BuffType.LianYun
-            && (HasTalent(14) || (HasTalentResonance(10) && CheckTalentResonanceTempFlag(10)) || HasBuff(BuffType.LongMaJingShen)))
+            && (HasTalent(14) || (HasTalentResonance(10) && CheckTalentResonanceTempFlag(10)) || HasBuff(BuffType.LongMaJingShen) || HasXianMoStrategy(11001) || HasTalent(275)))
             return true;
         return _buffs is not null && _buffs.TryGetValue(buff, out var v) && v != 0;
     }
@@ -459,7 +462,7 @@ public sealed partial class Combatant
         if (animaDelta > 0 && GetBuffValue(BuffType.JiaLingQiJianBan) > 0)
             animaDelta = (int)MathF.Floor(animaDelta / 2f);
         // 天赋204：加灵气改为加体魄（带共鸣137 时不转），且不再加灵气。
-        if (animaDelta > 0 && HasTalent(204) && !Subs.HasTalentResonance(this, 137))
+        if (animaDelta > 0 && HasTalent(204) && !Subs.HasTalentResonance(this, 137) && !HasXianMoStrategy(17071))
         {
             ModifyTiPo(animaDelta);
             animaDelta = 0;
@@ -511,7 +514,7 @@ public sealed partial class Combatant
         if (HasBuff(BuffType.XingYueQianKunShan))
             Combat.CombatMath.ApplyDamage(this, Opponent,
                 DamageInfo.Create(this, DamageType.Damage, animaDelta * GetBuffValue(BuffType.XingYueQianKunShan), skipWoundCheck: true));
-        if (HasBuff(BuffType.YeDuZhiYin))
+        if (HasBuff(BuffType.YeDuZhiYin) && HasBuff(BuffType.ZiShenHuiHe))   // 10-08：只在自己回合内
         {
             ModifyBuffValue(BuffType.YeDuZhiYin, -1);
             ModifyBuffValue(BuffType.ExActionAgain, 1);
@@ -589,6 +592,11 @@ public sealed partial class Combatant
             ModifyAnima(1);
         }
 
+        if (HasXianMoStrategy(7042) && delta > 0 && !HasBuff(BuffType.ChanXinJuLingYiChuFa))
+        {
+            ModifyBuffValue(BuffType.ChanXinJuLingYiChuFa, 1);
+            ModifyAnima(1);
+        }
         // 体魄涨 = 最大生命同涨（无条件，减体魄时也降）。
         ModifyMaxHp(delta);
 
@@ -718,7 +726,12 @@ public sealed partial class Combatant
     }
 
     /// <summary>SetHp：直接设血（封顶到上限）。</summary>
-    public void SetHp(int hp) => Hp = hp > MaxHp ? MaxHp : hp;
+    public void SetHp(int hp)
+    {
+        int previous = Hp;
+        Hp = hp > MaxHp ? MaxHp : hp;
+        HpDeltaSink?.Invoke(this, Hp - previous, false);
+    }
 
     /// <summary>死亡（不能复活/死战时）。headless 只置标志。</summary>
     public void OnDead() => IsDead = true;

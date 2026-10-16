@@ -111,8 +111,22 @@ public readonly record struct ParamRequest(ParamKind Kind, int Lo, int Hi, int S
     public static ParamRequest FromDebuffPool(int site, ParamDebuffPool pool) => new(ParamKind.DebuffPool, (int)pool, 0, site, 0);
     public static ParamRequest FromCardPool(int site, ParamCardPool pool) => new(ParamKind.CardPool, (int)pool, 0, site, 0);
     public static ParamRequest HandPick(int site) => new(ParamKind.HandPick, 0, 0, site, 0);
+    /// <summary>从上一轮手牌里按 <paramref name="filter"/> 挑一张（Lo = 筛选，Hi = 等级上限，0 = 不限）。</summary>
+    public static ParamRequest HandPick(int site, HandPickFilter filter, int maxLevel)
+        => new(ParamKind.HandPick, (int)filter, maxLevel, site, 0);
     /// <summary>A 类公式：按 <paramref name="cardId"/> 的 baseId 分派（完整 id 用来读本牌的 otherParams / 等级）。</summary>
     public static ParamRequest Formula(int cardId) => new(ParamKind.Formula, 0, 0, Effects.CardTypes.BaseId(cardId), cardId);
+}
+
+/// <summary><see cref="ParamKind.HandPick"/> 的筛选条件（放在 <see cref="ParamRequest.Lo"/>）。</summary>
+public enum HandPickFilter : byte
+{
+    /// <summary>消耗 / 持续牌（349 梦•回响阵纹）。</summary>
+    ConsumeOrSustain,
+    /// <summary>五行灵阵牌（7000111 五行阵旗，等级上限在 Hi）。</summary>
+    WuXingLingZhen,
+    /// <summary>五行灵印牌（7000111 五行阵旗偶数格）。</summary>
+    WuXingLingYin,
 }
 
 /// <summary>非卡牌消费点的 <see cref="ParamRequest.Site"/>（负数，不与 baseId 冲突）。</summary>

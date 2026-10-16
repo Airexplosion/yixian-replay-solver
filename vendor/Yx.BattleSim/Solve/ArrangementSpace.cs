@@ -84,7 +84,7 @@ public sealed class ArrangementSpace
         return k;
     }
 
-    /// <summary>不同摆法的总数（多重集排列，封顶 1e15）。</summary>
+    /// <summary>不同摆法的总数（多重集排列；大型空间用 double 表示）。</summary>
     public double CountDistinct()
     {
         // f[r, l] = 用已处理的种类填 r 格、其中受限牌 l 张的「Σ Π 1/k!」；总数 = Slots! × Σ_l f[Slots, l]
@@ -114,7 +114,7 @@ public sealed class ArrangementSpace
         for (int i = 2; i <= Slots; i++) fact *= i;
         double sum = 0;
         for (int l = 0; l <= lmax; l++) sum += f[Slots, l];
-        return Math.Min(fact * sum, 1e15);
+        return fact * sum;
     }
 
     /// <summary>枚举全部不同摆法（调用方先用 <see cref="CountDistinct"/> 确认规模）。</summary>
@@ -141,6 +141,44 @@ public sealed class ArrangementSpace
         }
         Rec(0);
         return result;
+    }
+
+    /// <summary>Stream distinct legal arrangements with O(slots + types) state; cancellation also works before a leaf.</summary>
+    public IEnumerable<byte[]> EnumerateLazy(CancellationToken ct = default)
+    {
+        var left = (int[])Counts.Clone();
+        var cur = new byte[Slots];
+        var next = new int[Slots];
+        int pos = 0, limitedUsed = 0;
+        while (pos >= 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            int t = next[pos];
+            while (t < TypeIds.Length && (left[t] <= 0
+                || (Limited[t] && MaxLimited >= 0 && limitedUsed >= MaxLimited))) t++;
+            if (t == TypeIds.Length)
+            {
+                next[pos] = 0;
+                pos--;
+                if (pos >= 0)
+                {
+                    left[cur[pos]]++;
+                    if (Limited[cur[pos]]) limitedUsed--;
+                }
+                continue;
+            }
+            next[pos] = t + 1;
+            cur[pos] = (byte)t;
+            left[t]--;
+            if (Limited[t]) limitedUsed++;
+            if (pos == Slots - 1)
+            {
+                yield return (byte[])cur.Clone();
+                left[t]++;
+                if (Limited[t]) limitedUsed--;
+            }
+            else { pos++; next[pos] = 0; }
+        }
     }
 
     /// <summary>随机合法摆法（满足消耗 / 持续上限）。</summary>
