@@ -68,7 +68,7 @@ def expression(text, row):
     return str(value)
 
 
-def describe(template, row, card_names):
+def describe(template, row, card_names, terms=None):
     unresolved = []
     def replace(match):
         try:
@@ -79,6 +79,8 @@ def describe(template, row, card_names):
     text = re.sub(r'\{([^{}]+)\}', replace, template)
     text = text.replace(chr(92) + 'n', chr(10))
     text = re.sub(r'<[^>]*>', '', text)
+    text = re.sub(r'【KEYWORD_([^】]+)】', lambda m: '【' + m[1] + '】', text)
+    text = re.sub(r'【TALENT_(\d+)】', lambda m: '【' + (terms or {}).get('Talent_' + m[1], '仙命 ' + m[1]) + '】', text)
     text = re.sub(r'【(-?\d+)】', lambda m: '【' + card_names.get(int(m[1]), m[1]) + '】', text)
     return text, sorted(set(unresolved))
 
@@ -110,7 +112,7 @@ def build(config_dir, raw, config_version):
             row.setdefault('otherParams', [])
             for key in ('countParam', 'effectRound', 'relateTalentId', 'maxHp', 'attack', 'def', 'attackCount', 'anima', 'physique'):
                 row.setdefault(key, 0)
-            description, unresolved = describe(template, row, card_names)
+            description, unresolved = describe(template, row, card_names, terms)
             entry = {'id': identifier, 'kind': kind, 'name': name,
                      'description': description, 'descriptionTemplate': template,
                      'known': True, 'nameAvailable': bool(name),

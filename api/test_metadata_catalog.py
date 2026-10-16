@@ -3,6 +3,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+import importlib.util
 from unittest.mock import patch
 
 import metadata_catalog
@@ -49,6 +50,18 @@ class CatalogTests(unittest.TestCase):
         result = metadata_catalog.decorate_replay(replay)
         self.assertEqual(result['rounds'][0]['request']['me']['talents'], [10005])
         self.assertEqual(result['rounds'][0]['request']['me']['details']['xianMoStrategies'][0]['name'], 'xianmo test')
+
+
+class ExportDescriptionTests(unittest.TestCase):
+    def test_keywords_linked_talents_and_def_parameter_have_readable_text(self):
+        path = pathlib.Path(__file__).resolve().parents[1] / 'tools/export_catalog.py'
+        spec = importlib.util.spec_from_file_location('export_catalog', path)
+        exporter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(exporter)
+        text, unresolved = exporter.describe('【KEYWORD_状态甲】 【TALENT_7】 +{def} /{otherParams[0]}',
+            {'def': 2, 'otherParams': [3]}, {}, {'Talent_7': '虚构仙命'})
+        self.assertEqual(text, '【状态甲】 【虚构仙命】 +2 /3')
+        self.assertEqual(unresolved, [])
 
 
 if __name__ == '__main__':
